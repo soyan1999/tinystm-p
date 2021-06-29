@@ -273,7 +273,7 @@ enum {
  * the main thread, before any access to the other functions of the
  * library.
  */
-void stm_init(void) _CALLCONV;
+void stm_init(char *pool_path, void (*obj_init) ()) _CALLCONV;
 
 /**
  * Clean up the STM library.  This function must be called once, from

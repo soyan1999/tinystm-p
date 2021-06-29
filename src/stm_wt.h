@@ -122,6 +122,7 @@ stm_wt_rollback(stm_tx_t *tx)
   w = tx->w_set.entries;
   for (i = tx->w_set.nb_entries; i > 0; i--, w++) {
     stm_word_t j;
+    page_free(tx, (uint64_t)w->addr, 0);
     /* Restore previous value */
     if (w->mask != 0)
       ATOMIC_STORE(w->addr, w->value);
@@ -141,6 +142,8 @@ stm_wt_rollback(stm_tx_t *tx)
       ATOMIC_STORE_REL(w->lock, LOCK_UPD_INCARNATION(w->version, j));
     }
   }
+  // add for persist
+  v_log_reset(tx); // reset v_log
   /* Make sure that all lock releases become visible */
   ATOMIC_MB_WRITE;
 }
@@ -189,7 +192,7 @@ stm_wt_read(stm_tx_t *tx, volatile stm_word_t *addr)
  restart_no_load:
   if (likely(!LOCK_GET_WRITE(l))) {
     /* Not locked */
-    value = ATOMIC_LOAD_ACQ(addr);
+    value = ATOMIC_LOAD_ACQ(page_use(tx, (uint64_t)addr)); // page map
     l2 = ATOMIC_LOAD_ACQ(lock);
     if (l != l2) {
       l = l2;
@@ -232,7 +235,7 @@ stm_wt_read(stm_tx_t *tx, volatile stm_word_t *addr)
     /* Simply check if address falls inside our write set (avoids non-faulting load) */
     if (likely(tx->w_set.entries <= w && w < tx->w_set.entries + tx->w_set.nb_entries)) {
       /* Yes: we have a version locked by us that was valid at write time */
-      value = ATOMIC_LOAD(addr);
+      value = ATOMIC_LOAD(page_use(tx, (uint64_t)addr)); // page map
       /* No need to add to read set (will remain valid) */
       return value;
     }
@@ -321,13 +324,14 @@ stm_wt_write(stm_tx_t *tx, volatile stm_word_t *addr, stm_word_t value, stm_word
         if (addr == prev->addr) {
           if (w->mask == 0) {
             /* Remember old value */
-            w->value = ATOMIC_LOAD(addr);
+            w->value = ATOMIC_LOAD(page_use(tx, (uint64_t)addr)); // page map
             w->mask = mask;
           }
           /* Yes: only write to memory */
           if (mask != ~(stm_word_t)0)
-            value = (ATOMIC_LOAD(addr) & ~mask) | (value & mask);
-          ATOMIC_STORE(addr, value);
+            value = (ATOMIC_LOAD(page_use(tx, (uint64_t)addr)) & ~mask) | (value & mask); // page map
+          ATOMIC_STORE(page_use(tx, (uint64_t)addr), value);
+          v_log_insert_exist(tx, (uint64_t)addr, value, ((uint64_t)w - (uint64_t)tx->w_set.entries) >> 3); // insert exist v_log
           return w;
         }
         if (prev->next == NULL) {
@@ -425,12 +429,13 @@ do_write:
 #endif /* ! NDEBUG */
   } else {
     /* Remember old value */
-    w->value = ATOMIC_LOAD(addr);
+    w->value = ATOMIC_LOAD(page_use(tx, (uint64_t)addr)); // page map
   }
   if (mask != 0) {
     if (mask != ~(stm_word_t)0)
       value = (w->value & ~mask) | (value & mask);
-    ATOMIC_STORE(addr, value);
+    ATOMIC_STORE(page_use(tx, (uint64_t)addr), value); // page map
+    v_log_insert(tx, (uint64_t)addr, value); // insert v_log
   }
   w->next = NULL;
   if (prev != NULL) {
@@ -499,9 +504,12 @@ stm_wt_WaW(stm_tx_t *tx, volatile stm_word_t *addr, stm_word_t value, stm_word_t
   assert(mask != 0);
 #endif /* ! NDEBUG */
   if (mask != ~(stm_word_t)0) {
-    value = (ATOMIC_LOAD(addr) & ~mask) | (value & mask);
+    value = (ATOMIC_LOAD(page_use(tx, (uint64_t)addr)) & ~mask) | (value & mask); // page map
   }
-  ATOMIC_STORE(addr, value);
+  ATOMIC_STORE(page_use(tx, (uint64_t)addr), value); // page map
+#ifndef NDEBUG
+  v_log_insert_exist(tx, (uint64_t)addr, value, ((uint64_t)w - (uint64_t)tx->w_set.entries) >> 3); // insert exist v_log
+#endif /* ! NDEBUG */
 }
 
 static INLINE int
@@ -563,8 +571,16 @@ stm_wt_commit(stm_tx_t *tx)
     if (w->next == NULL) {
       /* No need for CAS (can only be modified by owner transaction) */
       ATOMIC_STORE(w->lock, LOCK_SET_TIMESTAMP(t));
+      page_free(tx, (uint64_t)w->addr, t); // free page lock and add touch id
     }
   }
+  // add for persist
+  v_log_reset(tx); // reset v_log
+  while (nv_log_record(tx, t) < 0) {
+    nv_log_reproduce();
+  }
+  nv_log_reproduce();
+
   /* Make sure that all lock releases become visible */
   /* TODO: is ATOMIC_MB_WRITE required? */
   ATOMIC_MB_WRITE;

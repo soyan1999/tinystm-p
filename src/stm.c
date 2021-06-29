@@ -247,7 +247,7 @@ signal_catcher(int sig)
  * Called once (from main) to initialize STM infrastructure.
  */
 _CALLCONV void
-stm_init(void)
+stm_init(char *pool_path, void (*obj_init) ())
 {
 #if CM == CM_MODULAR
   char *s;
@@ -289,6 +289,8 @@ stm_init(void)
 
   tls_init();
 
+  pmem_init(pool_path, obj_init); // init or recover log area
+
 #ifdef SIGNAL_HANDLER
   if (getenv(NO_SIGNAL_HANDLER) == NULL) {
     /* Catch signals for non-faulting load */
@@ -315,6 +317,7 @@ stm_exit(void)
   if (!_tinystm.initialized)
     return;
 
+  nv_log_save(); // add for save all nv_log to nv_heap
   tls_exit();
   stm_quiesce_exit();
 

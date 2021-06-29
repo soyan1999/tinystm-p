@@ -29,10 +29,13 @@
 #include <pthread.h>
 #include <string.h>
 #include <stm.h>
+#include <libpmemobj.h>
 #include "tls.h"
 #include "utils.h"
 #include "atomic.h"
 #include "gc.h"
+
+
 
 /* ################################################################### *
  * DEFINES
@@ -45,7 +48,7 @@
 #define MODULAR                         3
 
 #ifndef DESIGN
-# define DESIGN                         WRITE_BACK_ETL
+# define DESIGN                         WRITE_THROUGH
 #endif /* ! DESIGN */
 
 /* Contention managers */
@@ -316,6 +319,21 @@ typedef struct cb_entry {               /* Callback entry */
   void *arg;                            /* Argument to be passed to function */
 } cb_entry_t;
 
+typedef struct nv_log nv_log_t;
+typedef struct v_log_head v_log_head_t;
+
+typedef struct global_addition {
+  PMEMobjpool *pool;
+  struct root *root;
+  uint64_t base;
+  nv_log_t *nv_log;
+} global_addition_t;
+
+typedef struct tx_addition {
+  uint64_t thread_nb;                   // thread number of all
+  v_log_head_t *v_log_head;
+} tx_addition_t;
+
 typedef struct stm_tx {                 /* Transaction descriptor */
   JMP_BUF env;                          /* Environment for setjmp/longjmp */
   stm_tx_attr_t attr;                   /* Transaction attributes (user-specified) */
@@ -324,6 +342,7 @@ typedef struct stm_tx {                 /* Transaction descriptor */
   stm_word_t end;                       /* End timestamp (validity range) */
   r_set_t r_set;                        /* Read set */
   w_set_t w_set;                        /* Write set */
+  tx_addition_t addition;
 #ifdef IRREVOCABLE_ENABLED
   unsigned int irrevocable:4;           /* Is this execution irrevocable? */
 #endif /* IRREVOCABLE_ENABLED */
@@ -369,7 +388,7 @@ typedef struct stm_tx {                 /* Transaction descriptor */
 } stm_tx_t;
 
 /* This structure should be ordered by hot and cold variables */
-typedef struct {
+typedef struct global_ {
   volatile stm_word_t locks[LOCK_ARRAY_SIZE] ALIGNED;
   volatile stm_word_t gclock[512 / sizeof(stm_word_t)] ALIGNED;
   unsigned int nb_specific;             /* Number of specific slots used (<= MAX_SPECIFIC) */
@@ -386,6 +405,7 @@ typedef struct {
   unsigned int nb_abort_cb;
   cb_entry_t abort_cb[MAX_CB];          /* Abort callbacks */
   unsigned int initialized;             /* Has the library been initialized? */
+  global_addition_t addition;
 #ifdef IRREVOCABLE_ENABLED
   volatile stm_word_t irrevocable;      /* Irrevocability status */
 #endif /* IRREVOCABLE_ENABLED */
@@ -408,6 +428,9 @@ typedef struct {
 } ALIGNED global_t;
 
 extern global_t _tinystm;
+
+#include "log.h"
+#include "page.h"
 
 #if CM == CM_MODULAR
 # define KILL_SELF                      0x00
@@ -488,7 +511,7 @@ stm_quiesce_enter_thread(stm_tx_t *tx)
   /* Add new descriptor at head of list */
   tx->next = _tinystm.threads;
   _tinystm.threads = tx;
-  _tinystm.threads_nb++;
+  tx->addition.thread_nb = _tinystm.threads_nb++;
   pthread_mutex_unlock(&_tinystm.quiesce_mutex);
 }
 
@@ -1221,6 +1244,7 @@ int_stm_init_thread(void)
   tx->w_set.bloom = 0;
 #endif /* USE_BLOOM_FILTER */
   stm_allocate_ws_entries(tx, 0);
+  v_log_init(tx); // init v_log
   /* Nesting level */
   tx->nesting = 0;
   /* Transaction-specific data */
