@@ -12,7 +12,7 @@
 # define VPN_LENGTH     (NVM_LENGTH - PAGE_LENGTH)          // 18
 # define PPN_NUM        (1 << (DRAM_LENGTH - PAGE_LENGTH))  // 64k
 
-typedef union v_page_inf {
+typedef union v_page_inf { // 页表有效信息放在易失页表项可以利用CAS操作，替换与映射将操作同一变量
     struct {
         uint64_t vaild : 1;
         uint64_t used : 63; // thread used bitmap
@@ -21,7 +21,6 @@ typedef union v_page_inf {
 } v_page_inf_t;
 
 typedef struct free_page_entry {
-    struct free_page_entry *pre;
     struct free_page_entry *next;
     volatile v_page_inf_t page_inf;        
     uint64_t PPN;
@@ -32,7 +31,6 @@ struct free_page_head {
     uint32_t free_num;
     pthread_spinlock_t lock;
     free_page_entry_t *head;
-    free_page_entry_t *tail;
 } free_page_head;
 
 typedef struct page_entry {
@@ -59,13 +57,7 @@ static inline uint64_t *addr_nv_2_v(uint64_t PPN, uint64_t nv_addr) {
 
 // move a node from tail to head
 static inline void free_page_roll() {
-    free_page_entry_t * node = free_page_head.tail;
-    free_page_head.tail = node->pre;
-    node->pre = NULL;
-    free_page_head.tail->next = NULL;
-    free_page_head.head->pre = node;
-    node->next = free_page_head.head;
-    free_page_head.head = node->next;
+    free_page_head.head = free_page_head.head->next;
 }
 
 static int page_map_(stm_tx_t *tx, uint64_t nv_addr) {
@@ -87,25 +79,25 @@ static int page_map_(stm_tx_t *tx, uint64_t nv_addr) {
     v_page_inf_t old_v, new_v;
     
     while (1) {
-        old_v = free_page_head.tail->page_inf;
+        old_v = free_page_head.head->page_inf;
         new_v.v_page_inf = 0;
 
         // v_page in used
-        if (old_v.used != 0 || ATOMIC_CAS_FULL(&free_page_head.tail->page_inf.v_page_inf, old_v.v_page_inf, new_v.v_page_inf) == 0) {
+        if (old_v.used != 0 || ATOMIC_CAS_FULL(&free_page_head.head->page_inf.v_page_inf, old_v.v_page_inf, new_v.v_page_inf) == 0) {
             free_page_roll();
             continue;
         }
         
         // not used but mapped, clean the old page_table entry
         if (old_v.vaild == 1) {
-            page_table[free_page_head.tail->VPN].free_page = NULL;
+            page_table[free_page_head.head->VPN].free_page = NULL;
         }
 
         // map to new nv_page 
-        free_page_head.tail->VPN = VPN;
+        free_page_head.head->VPN = VPN;
         new_v.vaild = 1;
         new_v.used = 1 << tx->addition.thread_nb;
-        free_page_head.tail->page_inf = new_v;
+        free_page_head.head->page_inf = new_v;
 
         free_page_roll();
         break;
@@ -126,24 +118,16 @@ void page_init() {
 
     free_page_head.free_num = PPN_NUM;
     pthread_spin_init(&free_page_head.lock, 0);
-    free_page_head.head = malloc(sizeof(free_page_entry_t));
-    free_page_head.head->PPN = v_page_alloc();
-    free_page_head.head->VPN = 0;
-    free_page_head.head->page_inf.v_page_inf = 0;
-    free_page_head.head->pre = 0;
 
     node = free_page_head.head;
-    for (int i = 0; i < PPN_NUM - 1; i++) {
-        node->next = malloc(sizeof(free_page_entry_t));
-        node->next->PPN = v_page_alloc();
-        node->next->VPN = 0;
-        node->next->page_inf.v_page_inf = 0;
-        node->next->pre = node;
-        node = node->next;
+    for (int i = 0; i < PPN_NUM; i++) {
+        node = malloc(sizeof(free_page_entry_t));
+        node->PPN = v_page_alloc();
+        node->VPN = 0;
+        node->page_inf.v_page_inf = 0;
+        if (i != PPN_NUM - 1) node = node->next;
     }
-    node->next = NULL;
-
-    free_page_head.tail = node;
+    node->next = free_page_head.head;
 }
 
 // map the page and set write set; if page has mapped, return directly
@@ -171,6 +155,11 @@ uint64_t *page_use(stm_tx_t *tx, uint64_t nv_addr) {
         
         // page unmapped
         if (fail_v.vaild == 0) {
+            page_map(tx,nv_addr);
+            return addr_nv_2_v(page_entry->PPN, nv_addr);
+        }
+
+        if (page_table[VPN].free_page == NULL) {
             page_map(tx,nv_addr);
             return addr_nv_2_v(page_entry->PPN, nv_addr);
         }

@@ -30,6 +30,7 @@
 
 #include <pthread.h>
 #include <sched.h>
+#include <libpmemobj.h>
 
 #include "stm.h"
 #include "stm_internal.h"
@@ -243,11 +244,24 @@ signal_catcher(int sig)
  * STM FUNCTIONS
  * ################################################################### */
 
+// persist func
+_CALLCONV void *nv_to_ptr(nv_ptr nv_addr) {
+  return (void *)(nv_addr + _tinystm.addition.base);
+}
+
+_CALLCONV nv_ptr ptr_to_nv(void *ptr) {
+  return (nv_ptr)ptr - _tinystm.addition.base;
+}
+
+_CALLCONV PMEMobjpool *pool_init(char *pool_path) {
+  return pmem_init(pool_path);
+}
+
 /*
  * Called once (from main) to initialize STM infrastructure.
  */
 _CALLCONV void
-stm_init(char *pool_path, void (*obj_init) ())
+stm_init()
 {
 #if CM == CM_MODULAR
   char *s;
@@ -289,7 +303,6 @@ stm_init(char *pool_path, void (*obj_init) ())
 
   tls_init();
 
-  pmem_init(pool_path, obj_init); // init or recover log area
 
 #ifdef SIGNAL_HANDLER
   if (getenv(NO_SIGNAL_HANDLER) == NULL) {

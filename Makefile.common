@@ -30,6 +30,7 @@ LDFLAGS += -L$(LIBDIR) -l$(TM)
 
 # Only on linux / TODO make source compatible with non-pthread OS
 LDFLAGS += -lpthread
+LDFLAGS += -lpmemobj
 
 # Solaris default memory allocator is quite slow, better use mtmalloc
 # LDFLAGS += -lmtmalloc

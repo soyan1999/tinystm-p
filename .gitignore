@@ -7,3 +7,5 @@
 # vscode
 .vscode/
 lib/
+*.pool
+test/bank-p/bank-p

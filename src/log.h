@@ -43,7 +43,7 @@ struct nv_log_block {
 TOID_DECLARE_ROOT(struct root);
 TOID_DECLARE(struct nv_log_block, TYPE_NV_LOG_BLOCK);
 
-void pmem_init(char *pool_path, void (*obj_init) ()); // use to init pmem area
+PMEMobjpool *pmem_init(char *pool_path); // use to init pmem area
 
 struct nv_log {
     nv_ptr write_block;
@@ -303,7 +303,7 @@ void nv_log_save() {
 }
 
 
-void pmem_init(char *pool_path, void (*obj_init) ()) {
+PMEMobjpool *pmem_init(char *pool_path) {
     FILE *r = fopen(pool_path, "r");
     PMEMoid Root;
 
@@ -314,7 +314,6 @@ void pmem_init(char *pool_path, void (*obj_init) ()) {
         _tinystm.addition.root = pmemobj_direct(Root);
         _tinystm.addition.base = (uint64_t)_tinystm.addition.root - Root.off;
         _tinystm.addition.nv_log = calloc(1, sizeof(nv_log_t));
-        obj_init();
         nv_log_init();
     }
     else {
@@ -326,5 +325,6 @@ void pmem_init(char *pool_path, void (*obj_init) ()) {
         _tinystm.addition.nv_log = calloc(1, sizeof(nv_log_t));
         nv_log_init();
     }
+    return _tinystm.addition.pool;
 }
 # endif /* _LOG_H_ */

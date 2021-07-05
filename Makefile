@@ -305,7 +305,7 @@ $(TMLIB):	$(SRCDIR)/$(TM).o $(SRCDIR)/wrappers.o $(GC) $(MODULES)
 	$(AR) crus $@ $^
 
 test:	$(TMLIB)
-	$(MAKE) -C test
+	$(MAKE) -C test/bank-p
 
 abi:
 	$(MAKE) -C abi
