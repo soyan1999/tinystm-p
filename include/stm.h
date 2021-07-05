@@ -79,6 +79,7 @@
 # include <stdint.h>
 # include <stdio.h>
 # include <stdlib.h>
+#include <libpmemobj.h>
 
 /**
  * Version string
@@ -126,6 +127,7 @@ struct stm_tx *stm_current_tx(void) _CALLCONV;
  * The library supports 32-bit and 64-bit architectures.
  */
 typedef uintptr_t stm_word_t;
+typedef uint64_t nv_ptr;
 
 /**
  * Transaction attributes specified by the application.
@@ -268,12 +270,19 @@ enum {
  * FUNCTIONS
  * ################################################################### */
 
+// persist func
+void *nv_to_ptr(nv_ptr nv_addr) _CALLCONV;
+
+nv_ptr ptr_to_nv(void *ptr) _CALLCONV;
+
+PMEMobjpool *pool_init(char *pool_path) _CALLCONV;
+
 /**
  * Initialize the STM library.  This function must be called once, from
  * the main thread, before any access to the other functions of the
  * library.
  */
-void stm_init(char *pool_path, void (*obj_init) ()) _CALLCONV;
+void stm_init() _CALLCONV;
 
 /**
  * Clean up the STM library.  This function must be called once, from
