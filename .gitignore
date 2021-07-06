@@ -8,4 +8,4 @@
 .vscode/
 lib/
 *.pool
-bank-p
+test/bank-p/bank-p
