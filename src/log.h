@@ -12,7 +12,11 @@
 # define END_SIG 0xfffffffffffffffe
 
 # define LAYOUT_NAME "dudetm"
-# define POOL_SIZE 1 * 1024 * 1024 * 1024
+# ifndef SMALL_POOL
+# define POOL_SIZE (1 * 1024 * 1024 * 1024)
+# elif
+# define POOL_SIZE (128 * 1024 * 1024)
+# endif
 
 
 typedef uint64_t nv_ptr;
@@ -23,6 +27,8 @@ struct root {
 
     nv_ptr persist_block;
     nv_ptr reproduce_block;
+    uint64_t persist_offset;
+    uint64_t reproduce_offset;
     uint64_t persist_timestamp;
     uint64_t reproduce_timestamp;
 };
@@ -147,13 +153,13 @@ static void nv_log_alloc() {
     struct nv_log_block *temp, *next;
     TX_BEGIN(_tinystm.addition.pool) {
         pmemobj_tx_add_range_direct(&_tinystm.addition.root->persist_block, 2 * sizeof(nv_ptr));
-        Temp = pmemobj_tx_alloc(sizeof(struct nv_log_block), TYPE_NV_LOG_BLOCK);
+        Temp = pmemobj_tx_zalloc(sizeof(struct nv_log_block), TYPE_NV_LOG_BLOCK);
         temp = pmemobj_direct(Temp);
         _tinystm.addition.root->persist_block = Temp.off;
         _tinystm.addition.root->reproduce_block = Temp.off;
 
         for (int i = 0; i < NV_LOG_BLOCK_NUM - 1; i++) {
-            Next = pmemobj_tx_alloc(sizeof(struct nv_log_block), TYPE_NV_LOG_BLOCK);
+            Next = pmemobj_tx_zalloc(sizeof(struct nv_log_block), TYPE_NV_LOG_BLOCK);
             next = pmemobj_direct(Next);
 
             temp->next = Next.off;
@@ -183,11 +189,14 @@ static int nv_log_insert(uint64_t *entry) {
     temp = (struct nv_log_block *)(_tinystm.addition.nv_log->write_block + _tinystm.addition.base);
 
     temp->logs[_tinystm.addition.nv_log->write_offset].nv_addr = *entry;
-    temp->logs[_tinystm.addition.nv_log->write_offset++].data = *(entry + 1);
+    temp->logs[_tinystm.addition.nv_log->write_offset].data = *(entry + 1);
+    pmemobj_flush(_tinystm.addition.pool, &temp->logs[_tinystm.addition.nv_log->write_offset], 2 * sizeof(uint64_t)); // flush
+    _tinystm.addition.nv_log->write_offset ++;
 
     if (_tinystm.addition.nv_log->write_offset == NV_LOG_NUM) {
         if (temp->next == _tinystm.addition.nv_log->read_block) return -1;
-        pmemobj_flush(_tinystm.addition.pool, (void *)_tinystm.addition.nv_log->write_block, sizeof(struct nv_log_block)); // flush
+        //if (temp->next == _tinystm.addition.nv_log->read_block) return -1;
+        // pmemobj_flush(_tinystm.addition.pool, (void *)(_tinystm.addition.nv_log->write_block), 2 *sizeof(uint64_t)); // flush
         _tinystm.addition.nv_log->write_block = temp->next;
         _tinystm.addition.nv_log->write_offset = 0;
         return 0;
@@ -210,8 +219,8 @@ void nv_log_init() {
     else {
         _tinystm.addition.nv_log->read_block = _tinystm.addition.root->reproduce_block;
         _tinystm.addition.nv_log->write_block = _tinystm.addition.root->persist_block;
-        _tinystm.addition.nv_log->read_offset = _tinystm.addition.root->reproduce_timestamp;
-        _tinystm.addition.nv_log->write_offset = _tinystm.addition.root->persist_timestamp;
+        _tinystm.addition.nv_log->read_offset = _tinystm.addition.root->reproduce_offset;
+        _tinystm.addition.nv_log->write_offset = _tinystm.addition.root->persist_offset;
         nv_log_recovery();
     }
 }
@@ -219,11 +228,13 @@ void nv_log_init() {
 int nv_log_record(stm_tx_t *tx, uint64_t commit_timestamp) {
     nv_log_begin_t begin_block = {.begin_flag = BEGIN_SIG, .length = tx->addition.v_log_head->num};
     nv_log_end_t end_block = {.end_flag = END_SIG, .time_commit = commit_timestamp};
+    // backup of write ptr
     uint64_t write_offset = _tinystm.addition.nv_log->write_offset;
     uint64_t write_block = _tinystm.addition.nv_log->write_block;
     v_log_head_t  *v_log = tx->addition.v_log_head;
     int result = 0;
     
+    // insert begin block
     result = nv_log_insert((uint64_t *)&begin_block);
     if (result != 0) {
         _tinystm.addition.nv_log->write_offset = write_offset;
@@ -231,7 +242,7 @@ int nv_log_record(stm_tx_t *tx, uint64_t commit_timestamp) {
         return result;
     }
     
-
+    // insert main logs
     for (int record_num = 0; record_num < tx->addition.v_log_head->num; record_num++) {
         result = nv_log_insert((uint64_t *)(&(v_log->v_logs[record_num % V_LOG_LENGTH])));
         if (result != 0) {
@@ -242,6 +253,7 @@ int nv_log_record(stm_tx_t *tx, uint64_t commit_timestamp) {
         if (record_num % V_LOG_LENGTH == 0) v_log = v_log->next;
     }
 
+    // insert end block
     result = nv_log_insert((uint64_t *)&end_block);
     if (result != 0) {
         _tinystm.addition.nv_log->write_offset = write_offset;
@@ -249,16 +261,17 @@ int nv_log_record(stm_tx_t *tx, uint64_t commit_timestamp) {
         return result;
     }
 
-    if (_tinystm.addition.nv_log->write_offset != 0) 
-        pmemobj_flush(_tinystm.addition.pool, (void *)_tinystm.addition.nv_log->write_block, sizeof(struct nv_log_block)); // flush
+    //if (_tinystm.addition.nv_log->write_offset != 0) 
+    //    pmemobj_flush(_tinystm.addition.pool, (void *)_tinystm.addition.nv_log->write_block, sizeof(struct nv_log_block)); // flush
     
     pmemobj_drain(_tinystm.addition.pool);
     
     // persist log inf in root
-    struct pobj_action act[2];
+    struct pobj_action act[3];
     pmemobj_set_value(_tinystm.addition.pool, &act[0], &_tinystm.addition.root->persist_block, _tinystm.addition.nv_log->write_block);
-    pmemobj_set_value(_tinystm.addition.pool, &act[1], &_tinystm.addition.root->persist_timestamp, commit_timestamp);
-    pmemobj_publish(_tinystm.addition.pool, act, 2);
+    pmemobj_set_value(_tinystm.addition.pool, &act[1], &_tinystm.addition.root->persist_offset, _tinystm.addition.nv_log->write_offset);
+    pmemobj_set_value(_tinystm.addition.pool, &act[2], &_tinystm.addition.root->persist_timestamp, commit_timestamp);
+    pmemobj_publish(_tinystm.addition.pool, act, 3);
 
     tx->addition.v_log_head->num = 0; // delete v_log
     return 0;
@@ -274,7 +287,8 @@ int nv_log_reproduce() {
 
     // read begin block and get log length
     nv_log_get(&temp);
-    if (temp.nv_addr != BEGIN_SIG) return -1; // not the begin block
+    //if (temp.nv_addr != BEGIN_SIG) return -1; // not the begin block
+    assert(temp.nv_addr == BEGIN_SIG);
     log_length = temp.data;
 
     // read log and persist real data
@@ -287,13 +301,15 @@ int nv_log_reproduce() {
     pmemobj_drain(_tinystm.addition.pool);
     // read end block and persist metadata in root
     nv_log_get(&temp);
-    if (temp.nv_addr != END_SIG) return -1; // not the begin block
+    //if (temp.nv_addr != END_SIG) return -1; // not the begin block
+    assert(temp.nv_addr == END_SIG);
     commit_timestamp = temp.data;
 
-    struct pobj_action act[2];
+    struct pobj_action act[3];
     pmemobj_set_value(_tinystm.addition.pool, &act[0], &_tinystm.addition.root->reproduce_block, _tinystm.addition.nv_log->read_block);
-    pmemobj_set_value(_tinystm.addition.pool, &act[1], &_tinystm.addition.root->reproduce_timestamp, commit_timestamp);
-    pmemobj_publish(_tinystm.addition.pool, act, 2);
+    pmemobj_set_value(_tinystm.addition.pool, &act[1], &_tinystm.addition.root->reproduce_offset, _tinystm.addition.nv_log->read_offset);
+    pmemobj_set_value(_tinystm.addition.pool, &act[2], &_tinystm.addition.root->reproduce_timestamp, commit_timestamp);
+    pmemobj_publish(_tinystm.addition.pool, act, 3);
 
     return 0;
 }

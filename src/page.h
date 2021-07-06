@@ -5,12 +5,21 @@
 
 # define PAGE_LENGTH    12
 # define PAGE_SIZE      (1 << PAGE_LENGTH)                  // 4K
+
+// NVM and DRAM size
+# ifndef SMALL_POOL
 # define NVM_LENGTH     30
 # define DRAM_LENGTH    30
+# elif
+# define NVM_LENGTH     27
+# define DRAM_LENGTH    27
+# endif
+
 # define VPN_NUM        (1 << (NVM_LENGTH - PAGE_LENGTH))   // 64k
 # define PPN_LENGTH     (DRAM_LENGTH - PAGE_LENGTH)         // 18
 # define VPN_LENGTH     (NVM_LENGTH - PAGE_LENGTH)          // 18
 # define PPN_NUM        (1 << (DRAM_LENGTH - PAGE_LENGTH))  // 64k
+# define MAP_INIT
 
 typedef union v_page_inf { // 页表有效信息放在易失页表项可以利用CAS操作，替换与映射将操作同一变量
     struct {
@@ -60,6 +69,11 @@ static inline void free_page_roll() {
     free_page_head.head = free_page_head.head->next;
 }
 
+// cp nvpage to vpage
+static inline void page_cp(uint64_t PPN, uint64_t VPN) {
+    memcpy((void *)(PPN << PAGE_LENGTH), (void *)((VPN << PAGE_LENGTH) + _tinystm.addition.base), PAGE_SIZE);
+}
+
 static int page_map_(stm_tx_t *tx, uint64_t nv_addr) {
     pthread_spin_lock(&free_page_head.lock);
 
@@ -97,6 +111,9 @@ static int page_map_(stm_tx_t *tx, uint64_t nv_addr) {
         free_page_head.head->VPN = VPN;
         new_v.vaild = 1;
         new_v.used = 1 << tx->addition.thread_nb;
+        page_cp(free_page_head.head->PPN, free_page_head.head->VPN);
+        // update page_inf before page is usable
+        ATOMIC_MB_WRITE;
         free_page_head.head->page_inf = new_v;
 
         free_page_roll();
@@ -119,12 +136,25 @@ void page_init() {
     free_page_head.free_num = PPN_NUM;
     pthread_spin_init(&free_page_head.lock, 0);
 
+    // init page table
+    for (uint64_t i = 0; i < VPN_NUM; i ++) {
+        page_table[i].free_page = NULL;
+        page_table[i].touch_id = 0;
+    }
+
     node = free_page_head.head;
-    for (int i = 0; i < PPN_NUM; i++) {
+    for (uint64_t i = 0; i < PPN_NUM; i++) {
         node = malloc(sizeof(free_page_entry_t));
         node->PPN = v_page_alloc();
         node->VPN = 0;
         node->page_inf.v_page_inf = 0;
+# ifdef MAP_INIT
+        // map vpage to nvpage before start
+        page_table[i].free_page = node;
+        node->page_inf.vaild = 1;
+        node->VPN = i;
+        page_cp(node->PPN, node->VPN);
+# endif
         if (i != PPN_NUM - 1) node = node->next;
     }
     node->next = free_page_head.head;
@@ -183,7 +213,7 @@ void page_free(stm_tx_t *tx, uint64_t nv_addr, uint64_t commit_timestamp) {
     // CAS modify write set
     do {
         old_v = page_entry->page_inf;
-        if ((old_v.used & (1 << tx->addition.thread_nb)) != 0) break;
+        if ((old_v.used & (1 << tx->addition.thread_nb)) == 0) break;
         new_v = page_entry->page_inf;
         new_v.used &= ~(1 << tx->addition.thread_nb);
     } while (ATOMIC_CAS_FULL(&page_entry->page_inf.v_page_inf, old_v.v_page_inf, new_v.v_page_inf) == 0);

@@ -25,6 +25,10 @@ ifneq ($(CFG),debug)
   CPPFLAGS += -DNDEBUG
 endif
 
+ifneq ($(SIZE),small)
+  CPPFLAGS += -DSMALL_POOL
+endif
+
 # TODO Should be only for test binaries
 LDFLAGS += -L$(LIBDIR) -l$(TM)
 
