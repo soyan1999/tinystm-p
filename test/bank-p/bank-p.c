@@ -544,6 +544,7 @@ int main(int argc, char **argv)
     bank->accounts[i].balance = 0;
   } */
   bank = obj_init(nb_accounts);
+  page_map_init();
   stop = 0;
 
   /* Init STM */

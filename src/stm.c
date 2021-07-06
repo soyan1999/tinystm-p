@@ -257,6 +257,10 @@ _CALLCONV PMEMobjpool *pool_init(char *pool_path) {
   return pmem_init(pool_path);
 }
 
+_CALLCONV void page_map_init() {
+  page_init();
+}
+
 /*
  * Called once (from main) to initialize STM infrastructure.
  */

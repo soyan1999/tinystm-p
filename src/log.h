@@ -109,6 +109,7 @@ static void v_log_expand(stm_tx_t *tx) {
     node = (v_log_head_t *)malloc(sizeof(v_log_head_t));
     node->num = 0;
     node->next = NULL;
+    if (tx->addition.v_log_head == NULL) tx->addition.v_log_head = node;
 }
 
 void v_log_init(stm_tx_t *tx) {
@@ -316,6 +317,7 @@ int nv_log_reproduce() {
 
 void nv_log_save() {
     nv_log_recovery();
+    pmemobj_close(_tinystm.addition.pool);
 }
 
 
@@ -326,13 +328,14 @@ PMEMobjpool *pmem_init(char *pool_path) {
     if (r == NULL) {
         PMEMobjpool *pop = pmemobj_create(pool_path, LAYOUT_NAME, POOL_SIZE, 0666);
         _tinystm.addition.pool = pop;
-        pmemobj_zalloc(pop, &Root, sizeof(struct root), 0);
+        Root = pmemobj_root(pop, sizeof(struct root));
         _tinystm.addition.root = pmemobj_direct(Root);
         _tinystm.addition.base = (uint64_t)_tinystm.addition.root - Root.off;
         _tinystm.addition.nv_log = calloc(1, sizeof(nv_log_t));
         nv_log_init();
     }
     else {
+        fclose(r);
         PMEMobjpool *pop = pmemobj_open(pool_path, LAYOUT_NAME);
         _tinystm.addition.pool = pop;
         Root = pmemobj_root(pop, sizeof(struct root));
