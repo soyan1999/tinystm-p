@@ -575,11 +575,11 @@ stm_wt_commit(stm_tx_t *tx)
     }
   }
   // add for persist
-  v_log_reset(tx); // reset v_log
   while (nv_log_record(tx, t) < 0) {
     nv_log_reproduce();
   }
   nv_log_reproduce();
+  v_log_reset(tx); // reset v_log
 
   /* Make sure that all lock releases become visible */
   /* TODO: is ATOMIC_MB_WRITE required? */

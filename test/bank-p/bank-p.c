@@ -141,6 +141,8 @@ bank_t *obj_init(long size) {
   if (root->obj_root[0] != 0) return (bank_t *)nv_to_ptr(root->obj_root[0]);
   TX_BEGIN(pool) {
     PMEMoid Bank = pmemobj_tx_alloc(sizeof(bank_t), TYPE_BANK);
+    pmemobj_tx_add_range_direct(&root->obj_root[0], sizeof(nv_ptr));
+    root->obj_root[0] = Bank.off;
     bank = pmemobj_direct(Bank);
     for (long i = 0; i < size; i ++) {
       PMEMoid Account = pmemobj_tx_alloc(sizeof(account_t), TYPE_ACCOUNT);
@@ -163,9 +165,9 @@ static int transfer(account_t *src, account_t *dst, int amount)
   i = TM_LOAD(ptr_to_nv(&src->balance));
   i -= amount;
   TM_STORE(ptr_to_nv(&src->balance), i);
-  i = TM_LOAD(ptr_to_nv(&src->balance));
+  i = TM_LOAD(ptr_to_nv(&dst->balance));
   i += amount;
-  TM_STORE(ptr_to_nv(&src->balance), i);
+  TM_STORE(ptr_to_nv(&dst->balance), i);
   TM_COMMIT;
 
   return amount;

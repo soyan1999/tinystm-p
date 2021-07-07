@@ -251,7 +251,7 @@ int nv_log_record(stm_tx_t *tx, uint64_t commit_timestamp) {
             _tinystm.addition.nv_log->write_block = write_block;
             return result;
         }
-        if (record_num % V_LOG_LENGTH == 0) v_log = v_log->next;
+        if (record_num != 0 && record_num % V_LOG_LENGTH == 0) v_log = v_log->next;
     }
 
     // insert end block
@@ -274,7 +274,7 @@ int nv_log_record(stm_tx_t *tx, uint64_t commit_timestamp) {
     pmemobj_set_value(_tinystm.addition.pool, &act[2], &_tinystm.addition.root->persist_timestamp, commit_timestamp);
     pmemobj_publish(_tinystm.addition.pool, act, 3);
 
-    tx->addition.v_log_head->num = 0; // delete v_log
+    //tx->addition.v_log_head->num = 0; // delete v_log
     return 0;
 }
 
