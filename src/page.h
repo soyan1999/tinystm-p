@@ -115,6 +115,7 @@ static int page_map_(stm_tx_t *tx, uint64_t nv_addr) {
         // update page_inf before page is usable
         ATOMIC_MB_WRITE;
         free_page_head.head->page_inf = new_v;
+        page_table[VPN].free_page = free_page_head.head;
 
         free_page_roll();
         break;
@@ -142,7 +143,7 @@ void page_init() {
         page_table[i].touch_id = 0;
     }
 
-    node = free_page_head.head;
+    //node = free_page_head.head;
     for (uint64_t i = 0; i < PPN_NUM; i++) {
         node = malloc(sizeof(free_page_entry_t));
         node->PPN = v_page_alloc();
@@ -155,6 +156,7 @@ void page_init() {
         node->VPN = i;
         page_cp(node->PPN, node->VPN);
 # endif
+        if (i == 0) free_page_head.head = node;
         if (i != PPN_NUM - 1) node = node->next;
     }
     node->next = free_page_head.head;
@@ -169,7 +171,7 @@ uint64_t *page_use(stm_tx_t *tx, uint64_t nv_addr) {
     // nv_page not mapped to v_page
     if (page_entry == NULL || page_entry->page_inf.vaild == 0) {
         page_map(tx,nv_addr);
-        return addr_nv_2_v(page_entry->PPN, nv_addr);
+        return addr_nv_2_v(page_table[VPN].free_page->PPN, nv_addr);
     }
         
     // in write set, return directly
@@ -186,12 +188,12 @@ uint64_t *page_use(stm_tx_t *tx, uint64_t nv_addr) {
         // page unmapped
         if (fail_v.vaild == 0) {
             page_map(tx,nv_addr);
-            return addr_nv_2_v(page_entry->PPN, nv_addr);
+            return addr_nv_2_v(page_table[VPN].free_page->PPN, nv_addr);
         }
 
         if (page_table[VPN].free_page == NULL) {
             page_map(tx,nv_addr);
-            return addr_nv_2_v(page_entry->PPN, nv_addr);
+            return addr_nv_2_v(page_table[VPN].free_page->PPN, nv_addr);
         }
 
         // other tx has changed the write set

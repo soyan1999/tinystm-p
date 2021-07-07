@@ -56,6 +56,7 @@ struct nv_log {
     nv_ptr read_block;
     uint64_t write_offset;
     uint64_t read_offset;
+    uint64_t last_timestamp;
 
 };
 
@@ -102,13 +103,13 @@ void nv_log_save(); // save all log to nv_heap
 static void v_log_expand(stm_tx_t *tx) {
     v_log_head_t *node = tx->addition.v_log_head;
 
-    while (node != NULL) {
+    while (node->next != NULL) {
         node = node->next;
     }
 
-    node = (v_log_head_t *)malloc(sizeof(v_log_head_t));
-    node->num = 0;
-    node->next = NULL;
+    node->next = (v_log_head_t *)malloc(sizeof(v_log_head_t));
+    node->next->num = 0;
+    node->next->next = NULL;
     if (tx->addition.v_log_head == NULL) tx->addition.v_log_head = node;
 }
 
@@ -222,13 +223,14 @@ void nv_log_init() {
         _tinystm.addition.nv_log->write_block = _tinystm.addition.root->persist_block;
         _tinystm.addition.nv_log->read_offset = _tinystm.addition.root->reproduce_offset;
         _tinystm.addition.nv_log->write_offset = _tinystm.addition.root->persist_offset;
+        _tinystm.addition.nv_log->last_timestamp = _tinystm.addition.root->persist_timestamp;
         nv_log_recovery();
     }
 }
 
 int nv_log_record(stm_tx_t *tx, uint64_t commit_timestamp) {
     nv_log_begin_t begin_block = {.begin_flag = BEGIN_SIG, .length = tx->addition.v_log_head->num};
-    nv_log_end_t end_block = {.end_flag = END_SIG, .time_commit = commit_timestamp};
+    nv_log_end_t end_block = {.end_flag = END_SIG, .time_commit = commit_timestamp + _tinystm.addition.nv_log->last_timestamp};
     // backup of write ptr
     uint64_t write_offset = _tinystm.addition.nv_log->write_offset;
     uint64_t write_block = _tinystm.addition.nv_log->write_block;
@@ -271,7 +273,7 @@ int nv_log_record(stm_tx_t *tx, uint64_t commit_timestamp) {
     struct pobj_action act[3];
     pmemobj_set_value(_tinystm.addition.pool, &act[0], &_tinystm.addition.root->persist_block, _tinystm.addition.nv_log->write_block);
     pmemobj_set_value(_tinystm.addition.pool, &act[1], &_tinystm.addition.root->persist_offset, _tinystm.addition.nv_log->write_offset);
-    pmemobj_set_value(_tinystm.addition.pool, &act[2], &_tinystm.addition.root->persist_timestamp, commit_timestamp);
+    pmemobj_set_value(_tinystm.addition.pool, &act[2], &_tinystm.addition.root->persist_timestamp, commit_timestamp + _tinystm.addition.nv_log->last_timestamp);
     pmemobj_publish(_tinystm.addition.pool, act, 3);
 
     //tx->addition.v_log_head->num = 0; // delete v_log
