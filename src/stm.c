@@ -246,10 +246,12 @@ signal_catcher(int sig)
 
 // persist func
 _CALLCONV void *nv_to_ptr(nv_ptr nv_addr) {
+  if (nv_addr == 0) return NULL;
   return (void *)(nv_addr + _tinystm.addition.base);
 }
 
 _CALLCONV nv_ptr ptr_to_nv(void *ptr) {
+  if(ptr == NULL) return 0;
   return (nv_ptr)ptr - _tinystm.addition.base;
 }
 

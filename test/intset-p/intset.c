@@ -78,9 +78,9 @@ void perror(const char *s);
 # define TM_STORE(addr, value)              stm_store((stm_word_t *)addr, (stm_word_t)value)
 # define TM_UNIT_STORE(addr, value, ts)     stm_unit_store((stm_word_t *)addr, (stm_word_t)value, ts)
 # define TM_COMMIT                          stm_commit(); }
-# define TM_MALLOC(size)                    stm_malloc(size)
+# define TM_MALLOC(size, type_num)          stm_malloc(size, type_num, pool)
 # define TM_FREE(addr)                      stm_free(addr, sizeof(*addr))
-# define TM_FREE2(addr, size)               stm_free(addr, size)
+# define TM_FREE2(addr, size)               stm_free(addr, size, pool)
 
 # define TM_INIT                            stm_init(); mod_mem_init(0); mod_ab_init(0, NULL)
 # define TM_EXIT                            stm_exit()
@@ -97,7 +97,7 @@ void perror(const char *s);
 # define IO_FLUSH                       fflush(NULL)
 /* Note: stdio is thread-safe */
 #endif
-
+#define USE_LINKEDLIST
 #if !(defined(USE_LINKEDLIST) || defined(USE_RBTREE) || defined(USE_SKIPLIST) || defined(USE_HASHSET))
 # error "Must define USE_LINKEDLIST or USE_RBTREE or USE_SKIPLIST or USE_HASHSET"
 #endif /* !(defined(USE_LINKEDLIST) || defined(USE_RBTREE) || defined(USE_SKIPLIST) || defined(USE_HASHSET)) */
@@ -118,6 +118,19 @@ void perror(const char *s);
  * ################################################################### */
 static volatile int stop;
 static unsigned short main_seed[3];
+static PMEMobjpool *pool;
+
+struct root {
+  nv_ptr obj_root[127];
+  uint64_t root_num;
+
+  nv_ptr persist_block;
+  nv_ptr reproduce_block;
+  uint64_t persist_timestamp;
+  uint64_t reproduce_timestamp;
+};
+
+struct root *root;
 
 static inline void rand_init(unsigned short *seed)
 {
@@ -179,13 +192,18 @@ typedef intptr_t val_t;
 # define VAL_MIN                        INT_MIN
 # define VAL_MAX                        INT_MAX
 
+enum {
+  TYPE_NODE = 2,
+  TYPE_INTSET
+};
+
 typedef struct node {
   val_t val;
-  struct node *next;
+  nv_ptr next;
 } node_t;
 
 typedef struct intset {
-  node_t *head;
+  nv_ptr head;
 } intset_t;
 
 TM_SAFE
@@ -194,17 +212,21 @@ static node_t *new_node(val_t val, node_t *next, int transactional)
   node_t *node;
 
   if (!transactional) {
-    node = (node_t *)malloc(sizeof(node_t));
+    node = pmemobj_direct(pmemobj_tx_zalloc(sizeof(node_t), TYPE_NODE));
+    node->val = val;
+    node->next = ptr_to_nv(next);
   } else {
-    node = (node_t *)TM_MALLOC(sizeof(node_t));
+    node = (node_t *)nv_to_ptr(TM_MALLOC(sizeof(node_t), TYPE_NODE));
+    TM_STORE(&node->val, val);
+    TM_STORE(&node->next, ptr_to_nv(next));
   }
   if (node == NULL) {
     perror("malloc");
     exit(1);
   }
 
-  node->val = val;
-  node->next = next;
+  // node->val = val;
+  // node->next = next;
 
   return node;
 }
@@ -214,13 +236,25 @@ static intset_t *set_new()
   intset_t *set;
   node_t *min, *max;
 
-  if ((set = (intset_t *)malloc(sizeof(intset_t))) == NULL) {
-    perror("malloc");
-    exit(1);
-  }
-  max = new_node(VAL_MAX, NULL, 0);
-  min = new_node(VAL_MIN, max, 0);
-  set->head = min;
+  pool = pool_init("intset-ll.pool");
+  PMEMoid Root = pmemobj_root(pool, sizeof(struct root));
+  root = pmemobj_direct(Root);
+  if (root->obj_root[0] != 0) return (intset_t *)nv_to_ptr(root->obj_root[0]);
+
+  TX_BEGIN(pool) {
+    set = (intset_t *)pmemobj_direct(pmemobj_tx_zalloc(sizeof(intset_t), TYPE_INTSET));
+    max = new_node(VAL_MAX, NULL, 0);
+    min = new_node(VAL_MIN, max, 0);
+    set->head = ptr_to_nv(min);
+  }TX_END
+
+  // if ((set = (intset_t *)malloc(sizeof(intset_t))) == NULL) {
+  //   perror("malloc");
+  //   exit(1);
+  // }
+  // max = new_node(VAL_MAX, NULL, 0);
+  // min = new_node(VAL_MIN, max, 0);
+  // set->head = min;
 
   return set;
 }
@@ -229,13 +263,20 @@ static void set_delete(intset_t *set)
 {
   node_t *node, *next;
 
-  node = set->head;
-  while (node != NULL) {
-    next = node->next;
-    free(node);
-    node = next;
-  }
-  free(set);
+  TX_BEGIN(pool) {
+    node = nv_to_ptr(set->head);
+    while (node != NULL) {
+      next = nv_to_ptr(node->next);
+      pmemobj_tx_free(pmemobj_oid(node));
+      node = next;
+    }
+    pmemobj_tx_free(pmemobj_oid(set));
+    
+    pmemobj_tx_add_range_direct(&root->obj_root[0], sizeof(nv_ptr));
+    root->obj_root[0] = 0;
+  }TX_END
+
+  pmemobj_close(pool);
 }
 
 static int set_size(intset_t *set)
@@ -244,10 +285,10 @@ static int set_size(intset_t *set)
   node_t *node;
 
   /* We have at least 2 elements */
-  node = set->head->next;
-  while (node->next != NULL) {
+  node = (node_t *)nv_to_ptr(((node_t *)nv_to_ptr(set->head))->next);
+  while (node->next != 0) {
     size++;
-    node = node->next;
+    node = (node_t *)nv_to_ptr(node->next);
   }
 
   return size;
@@ -265,60 +306,60 @@ static int set_contains(intset_t *set, val_t val, thread_data_t *td)
 # endif
 
   if (td == NULL) {
-    prev = set->head;
-    next = prev->next;
-    while (next->val < val) {
-      prev = next;
-      next = prev->next;
-    }
-    result = (next->val == val);
+    // prev = set->head;
+    // next = prev->next;
+    // while (next->val < val) {
+    //   prev = next;
+    //   next = prev->next;
+    // }
+    // result = (next->val == val);
   } else if (td->unit_tx == 0) {
     TM_START(0, RO);
-    prev = (node_t *)TM_LOAD(&set->head);
-    next = (node_t *)TM_LOAD(&prev->next);
+    prev = (node_t *)nv_to_ptr(TM_LOAD(&set->head));
+    next = (node_t *)nv_to_ptr(TM_LOAD(&prev->next));
     while (1) {
       v = TM_LOAD(&next->val);
       if (v >= val)
         break;
       prev = next;
-      next = (node_t *)TM_LOAD(&prev->next);
+      next = (node_t *)nv_to_ptr(TM_LOAD(&prev->next));
     }
     result = (v == val);
     TM_COMMIT;
   } 
 #ifndef TM_COMPILER
-  else {
-    /* Unit transactions */
-    stm_word_t ts, start_ts, val_ts;
-  restart:
-    start_ts = stm_get_clock();
-    /* Head node is never removed */
-    prev = (node_t *)TM_UNIT_LOAD(&set->head, &ts);
-    next = (node_t *)TM_UNIT_LOAD(&prev->next, &ts);
-    if (ts > start_ts)
-      start_ts = ts;
-    while (1) {
-      v = TM_UNIT_LOAD(&next->val, &val_ts);
-      if (val_ts > start_ts) {
-        /* Restart traversal (could also backtrack) */
-        goto restart;
-      }
-      if (v >= val)
-        break;
-      prev = next;
-      next = (node_t *)TM_UNIT_LOAD(&prev->next, &ts);
-      if (ts > start_ts) {
-        /* Verify that node has not been modified (value and pointer are updated together) */
-        TM_UNIT_LOAD(&prev->val, &val_ts);
-        if (val_ts > start_ts) {
-          /* Restart traversal (could also backtrack) */
-          goto restart;
-        }
-        start_ts = ts;
-      }
-    }
-    result = (v == val);
-  }
+  // else {
+  //   /* Unit transactions */
+  //   stm_word_t ts, start_ts, val_ts;
+  // restart:
+  //   start_ts = stm_get_clock();
+  //   /* Head node is never removed */
+  //   prev = (node_t *)TM_UNIT_LOAD(&set->head, &ts);
+  //   next = (node_t *)TM_UNIT_LOAD(&prev->next, &ts);
+  //   if (ts > start_ts)
+  //     start_ts = ts;
+  //   while (1) {
+  //     v = TM_UNIT_LOAD(&next->val, &val_ts);
+  //     if (val_ts > start_ts) {
+  //       /* Restart traversal (could also backtrack) */
+  //       goto restart;
+  //     }
+  //     if (v >= val)
+  //       break;
+  //     prev = next;
+  //     next = (node_t *)TM_UNIT_LOAD(&prev->next, &ts);
+  //     if (ts > start_ts) {
+  //       /* Verify that node has not been modified (value and pointer are updated together) */
+  //       TM_UNIT_LOAD(&prev->val, &val_ts);
+  //       if (val_ts > start_ts) {
+  //         /* Restart traversal (could also backtrack) */
+  //         goto restart;
+  //       }
+  //       start_ts = ts;
+  //     }
+  //   }
+  //   result = (v == val);
+  // }
 #endif /* TM_COMPILER */
 
   return result;
@@ -336,74 +377,77 @@ static int set_add(intset_t *set, val_t val, thread_data_t *td)
 # endif
 
   if (td == NULL) {
-    prev = set->head;
-    next = prev->next;
+    prev = (node_t *)nv_to_ptr(set->head);
+    next = (node_t *)nv_to_ptr(prev->next);
     while (next->val < val) {
       prev = next;
-      next = prev->next;
+      next = (node_t *)nv_to_ptr(prev->next);
     }
     result = (next->val != val);
     if (result) {
-      prev->next = new_node(val, next, 0);
+      TX_BEGIN(pool) {
+        pmemobj_tx_add_range_direct(&prev->next, sizeof(nv_ptr));
+        prev->next = (node_t *)nv_to_ptr(new_node(val, next, 0));
+      }TX_END
     }
   } else if (td->unit_tx == 0) {
     TM_START(1, RW);
-    prev = (node_t *)TM_LOAD(&set->head);
-    next = (node_t *)TM_LOAD(&prev->next);
+    prev = (node_t *)nv_to_ptr(TM_LOAD(&set->head));
+    next = (node_t *)nv_to_ptr(TM_LOAD(&prev->next));
     while (1) {
       v = TM_LOAD(&next->val);
       if (v >= val)
         break;
       prev = next;
-      next = (node_t *)TM_LOAD(&prev->next);
+      next = (node_t *)nv_to_ptr(TM_LOAD(&prev->next));
     }
     result = (v != val);
     if (result) {
-      TM_STORE(&prev->next, new_node(val, next, 1));
+      TM_STORE(&prev->next, ptr_to_nv(new_node(val, next, 1)));
     }
     TM_COMMIT;
   } 
 #ifndef TM_COMPILER
-  else {
-    /* Unit transactions */
-    stm_word_t ts, start_ts, val_ts;
-  restart:
-    start_ts = stm_get_clock();
-    /* Head node is never removed */
-    prev = (node_t *)TM_UNIT_LOAD(&set->head, &ts);
-    next = (node_t *)TM_UNIT_LOAD(&prev->next, &ts);
-    if (ts > start_ts)
-      start_ts = ts;
-    while (1) {
-      v = TM_UNIT_LOAD(&next->val, &val_ts);
-      if (val_ts > start_ts) {
-        /* Restart traversal (could also backtrack) */
-        goto restart;
-      }
-      if (v >= val)
-        break;
-      prev = next;
-      next = (node_t *)TM_UNIT_LOAD(&prev->next, &ts);
-      if (ts > start_ts) {
-        /* Verify that node has not been modified (value and pointer are updated together) */
-        TM_UNIT_LOAD(&prev->val, &val_ts);
-        if (val_ts > start_ts) {
-          /* Restart traversal (could also backtrack) */
-          goto restart;
-        }
-        start_ts = ts;
-      }
-    }
-    result = (v != val);
-    if (result) {
-      node_t *n = new_node(val, next, 0);
-      /* Make sure that there are no concurrent updates to that memory location */
-      if (!TM_UNIT_STORE(&prev->next, n, &ts)) {
-        free(n);
-        goto restart;
-      }
-    }
-  }
+  // else {
+  //   /* Unit transactions */
+  //   stm_word_t ts, start_ts, val_ts;
+  // restart:
+  //   start_ts = stm_get_clock();
+  //   /* Head node is never removed */
+  //   prev = (node_t *)TM_UNIT_LOAD(&set->head, &ts);
+  //   next = (node_t *)TM_UNIT_LOAD(&prev->next, &ts);
+  //   if (ts > start_ts)
+  //     start_ts = ts;
+  //   while (1) {
+  //     v = TM_UNIT_LOAD(&next->val, &val_ts);
+  //     if (val_ts > start_ts) {
+  //       /* Restart traversal (could also backtrack) */
+  //       goto restart;
+  //     }
+  //     if (v >= val)
+  //       break;
+  //     prev = next;
+  //     next = (node_t *)TM_UNIT_LOAD(&prev->next, &ts);
+  //     if (ts > start_ts) {
+  //       /* Verify that node has not been modified (value and pointer are updated together) */
+  //       TM_UNIT_LOAD(&prev->val, &val_ts);
+  //       if (val_ts > start_ts) {
+  //         /* Restart traversal (could also backtrack) */
+  //         goto restart;
+  //       }
+  //       start_ts = ts;
+  //     }
+  //   }
+  //   result = (v != val);
+  //   if (result) {
+  //     node_t *n = new_node(val, next, 0);
+  //     /* Make sure that there are no concurrent updates to that memory location */
+  //     if (!TM_UNIT_STORE(&prev->next, n, &ts)) {
+  //       free(n);
+  //       goto restart;
+  //     }
+  //   }
+  // }
 #endif /* ! TM_COMPILER */
 
   return result;
@@ -414,7 +458,7 @@ static int set_remove(intset_t *set, val_t val, thread_data_t *td)
   int result;
   node_t *prev, *next;
   val_t v;
-  node_t *n;
+  nv_ptr n;
 
 # ifdef DEBUG
   printf("++> set_remove(%d)\n", val);
@@ -422,31 +466,31 @@ static int set_remove(intset_t *set, val_t val, thread_data_t *td)
 # endif
 
   if (td == NULL) {
-    prev = set->head;
-    next = prev->next;
-    while (next->val < val) {
-      prev = next;
-      next = prev->next;
-    }
-    result = (next->val == val);
-    if (result) {
-      prev->next = next->next;
-      free(next);
-    }
+    // prev = set->head;
+    // next = prev->next;
+    // while (next->val < val) {
+    //   prev = next;
+    //   next = prev->next;
+    // }
+    // result = (next->val == val);
+    // if (result) {
+    //   prev->next = next->next;
+    //   free(next);
+    // }
   } else if (td->unit_tx == 0) {
     TM_START(2, RW);
-    prev = (node_t *)TM_LOAD(&set->head);
-    next = (node_t *)TM_LOAD(&prev->next);
+    prev = (node_t *)nv_to_ptr(TM_LOAD(&set->head));
+    next = (node_t *)nv_to_ptr(TM_LOAD(&prev->next));
     while (1) {
       v = TM_LOAD(&next->val);
       if (v >= val)
         break;
       prev = next;
-      next = (node_t *)TM_LOAD(&prev->next);
+      next = (node_t *)nv_to_ptr(TM_LOAD(&prev->next));
     }
     result = (v == val);
     if (result) {
-      n = (node_t *)TM_LOAD(&next->next);
+      n = TM_LOAD(&next->next);
       TM_STORE(&prev->next, n);
       /* Free memory (delayed until commit) */
       TM_FREE2(next, sizeof(node_t));
@@ -454,47 +498,47 @@ static int set_remove(intset_t *set, val_t val, thread_data_t *td)
     TM_COMMIT;
   } 
 #ifndef TM_COMPILER
-  else {
-    /* Unit transactions */
-    stm_word_t ts, start_ts, val_ts;
-  restart:
-    start_ts = stm_get_clock();
-    /* Head node is never removed */
-    prev = (node_t *)TM_UNIT_LOAD(&set->head, &ts);
-    next = (node_t *)TM_UNIT_LOAD(&prev->next, &ts);
-    if (ts > start_ts)
-      start_ts = ts;
-    while (1) {
-      v = TM_UNIT_LOAD(&next->val, &val_ts);
-      if (val_ts > start_ts) {
-        /* Restart traversal (could also backtrack) */
-        goto restart;
-      }
-      if (v >= val)
-        break;
-      prev = next;
-      next = (node_t *)TM_UNIT_LOAD(&prev->next, &ts);
-      if (ts > start_ts) {
-        /* Verify that node has not been modified (value and pointer are updated together) */
-        TM_UNIT_LOAD(&prev->val, &val_ts);
-        if (val_ts > start_ts) {
-          /* Restart traversal (could also backtrack) */
-          goto restart;
-        }
-        start_ts = ts;
-      }
-    }
-    result = (v == val);
-    if (result) {
-      /* Make sure that the transaction does not access versions more recent than start_ts */
-      TM_START_TS(start_ts, restart);
-      n = (node_t *)TM_LOAD(&next->next);
-      TM_STORE(&prev->next, n);
-      /* Free memory (delayed until commit) */
-      TM_FREE2(next, sizeof(node_t));
-      TM_COMMIT;
-    }
-  }
+  // else {
+  //   /* Unit transactions */
+  //   stm_word_t ts, start_ts, val_ts;
+  // restart:
+  //   start_ts = stm_get_clock();
+  //   /* Head node is never removed */
+  //   prev = (node_t *)TM_UNIT_LOAD(&set->head, &ts);
+  //   next = (node_t *)TM_UNIT_LOAD(&prev->next, &ts);
+  //   if (ts > start_ts)
+  //     start_ts = ts;
+  //   while (1) {
+  //     v = TM_UNIT_LOAD(&next->val, &val_ts);
+  //     if (val_ts > start_ts) {
+  //       /* Restart traversal (could also backtrack) */
+  //       goto restart;
+  //     }
+  //     if (v >= val)
+  //       break;
+  //     prev = next;
+  //     next = (node_t *)TM_UNIT_LOAD(&prev->next, &ts);
+  //     if (ts > start_ts) {
+  //       /* Verify that node has not been modified (value and pointer are updated together) */
+  //       TM_UNIT_LOAD(&prev->val, &val_ts);
+  //       if (val_ts > start_ts) {
+  //         /* Restart traversal (could also backtrack) */
+  //         goto restart;
+  //       }
+  //       start_ts = ts;
+  //     }
+  //   }
+  //   result = (v == val);
+  //   if (result) {
+  //     /* Make sure that the transaction does not access versions more recent than start_ts */
+  //     TM_START_TS(start_ts, restart);
+  //     n = (node_t *)TM_LOAD(&next->next);
+  //     TM_STORE(&prev->next, n);
+  //     /* Free memory (delayed until commit) */
+  //     TM_FREE2(next, sizeof(node_t));
+  //     TM_COMMIT;
+  //   }
+  // }
 #endif /* ! TM_COMPILER */
   return result;
 }
