@@ -26,6 +26,7 @@
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <libpmemobj.h>
 
 #include "mod_cb.h"
 #include "mod_mem.h"
@@ -54,6 +55,12 @@ typedef struct mod_cb_info {
   unsigned short abort_nb;              /* Number of abort callbacks */
   mod_cb_entry_t *abort;                /* Abort callback entries */
 } mod_cb_info_t;
+
+typedef struct func_arg {
+  PMEMobjpool *pool;
+  struct pobj_action act;
+  PMEMoid oid;
+} func_arg_t;
 
 /* TODO: to avoid false sharing, this should be in a dedicated cacheline.
  * Unfortunately this will cost one cache line for each module. Probably
@@ -130,12 +137,27 @@ int stm_on_commit(void (*on_commit)(void *arg), void *arg)
 /* ################################################################### *
  * MEMORY ALLOCATION FUNCTIONS
  * ################################################################### */
+
+// TODO: will init on alloced memory hurt consistence of page map structure?
+void act_on_commit(void *arg) {
+  func_arg_t *commit_arg = arg;
+  pmemobj_publish(commit_arg->pool, &commit_arg->act, 1);
+  free(commit_arg);
+}
+
+void act_on_abort(void *arg) {
+  func_arg_t *abort_arg = arg;
+  pmemobj_cancel(abort_arg->pool, &abort_arg->act, 1);
+  free(abort_arg);
+}
+
 static INLINE void *
-int_stm_malloc(struct stm_tx *tx, size_t size)
+int_stm_malloc(struct stm_tx *tx, size_t size, uint64_t type_num, PMEMobjpool *pool)
 {
   /* Memory will be freed upon abort */
   mod_cb_info_t *icb;
   void *addr;
+  func_arg_t *arg = xmalloc(sizeof(func_arg_t));
 
   assert(mod_cb.key >= 0);
   icb = (mod_cb_info_t *)stm_get_specific(mod_cb.key);
@@ -148,9 +170,12 @@ int_stm_malloc(struct stm_tx *tx, size_t size)
     size = (size + 7) & ~(size_t)0x07;
   }
 
-  addr = xmalloc(size);
+  arg->pool = pool;
+  arg->oid = pmemobj_reserve(pool, &arg->act, size, type_num);
+  addr = pmemobj_direct(arg->oid);
 
-  mod_cb_add_on_abort(icb, free, addr);
+  mod_cb_add_on_abort(icb, act_on_abort, arg);
+  mod_cb_add_on_commit(icb, act_on_commit, arg);
 
   return addr;
 }
@@ -158,15 +183,15 @@ int_stm_malloc(struct stm_tx *tx, size_t size)
 /*
  * Called by the CURRENT thread to allocate memory within a transaction.
  */
-void *stm_malloc(size_t size)
+void *stm_malloc(size_t size, uint64_t type_num, PMEMobjpool *pool)
 {
   struct stm_tx *tx = stm_current_tx();
-  return int_stm_malloc(tx, size);
+  return int_stm_malloc(tx, size, type_num, pool);
 }
 
-void *stm_malloc_tx(struct stm_tx *tx, size_t size)
+void *stm_malloc_tx(struct stm_tx *tx, size_t size, uint64_t type_num, PMEMobjpool *pool)
 {
-  return int_stm_malloc(tx, size);
+  return int_stm_malloc(tx, size, type_num, pool);
 }
 
 static inline
@@ -223,7 +248,7 @@ epoch_free(void *addr)
 #endif /* EPOCH_GC */
 
 static inline
-void int_stm_free2(struct stm_tx *tx, void *addr, size_t idx, size_t size)
+void int_stm_free2(struct stm_tx *tx, void *addr, size_t idx, size_t size, PMEMobjpool *pool)
 {
   /* Memory disposal is delayed until commit */
   mod_cb_info_t *icb;
@@ -231,6 +256,7 @@ void int_stm_free2(struct stm_tx *tx, void *addr, size_t idx, size_t size)
   assert(mod_cb.key >= 0);
   icb = (mod_cb_info_t *)stm_get_specific(mod_cb.key);
   assert(icb != NULL);
+  func_arg_t *arg = xmalloc(sizeof(func_arg_t));
 
   /* TODO: if block allocated in same transaction => no need to overwrite */
   if (size > 0) {
@@ -249,11 +275,17 @@ void int_stm_free2(struct stm_tx *tx, void *addr, size_t idx, size_t size)
       stm_store2_tx(tx, a++, 0, 0);
     }
   }
+
+  arg->pool = pool;
+  arg->oid = pmemobj_oid(addr);
+  pmemobj_defer_free(pool, arg->oid, &arg->act);
+
   /* Schedule for removal */
 #ifdef EPOCH_GC
   mod_cb_add_on_commit(icb, epoch_free, addr);
 #else /* ! EPOCH_GC */
-  mod_cb_add_on_commit(icb, free, addr);
+  mod_cb_add_on_abort(icb, act_on_abort, arg);
+  mod_cb_add_on_commit(icb, act_on_commit, arg);
 #endif /* ! EPOCH_GC */
 }
 
@@ -262,27 +294,27 @@ void int_stm_free2(struct stm_tx *tx, void *addr, size_t idx, size_t size)
  */
 void stm_free2(void *addr, size_t idx, size_t size)
 {
-  struct stm_tx *tx = stm_current_tx();
-  int_stm_free2(tx, addr, idx, size);
+  // struct stm_tx *tx = stm_current_tx();
+  // int_stm_free2(tx, addr, idx, size);
 }
 
 void stm_free2_tx(struct stm_tx *tx, void *addr, size_t idx, size_t size)
 {
-  int_stm_free2(tx, addr, idx, size);
+  // int_stm_free2(tx, addr, idx, size);
 }
 
 /*
  * Called by the CURRENT thread to free memory within a transaction.
  */
-void stm_free(void *addr, size_t size)
+void stm_free(void *addr, size_t size, PMEMobjpool *pool)
 {
   struct stm_tx *tx = stm_current_tx();
-  int_stm_free2(tx, addr, 0, size);
+  int_stm_free2(tx, addr, 0, size, pool);
 }
 
-void stm_free_tx(struct stm_tx *tx, void *addr, size_t size)
+void stm_free_tx(struct stm_tx *tx, void *addr, size_t size, PMEMobjpool *pool)
 {
-  int_stm_free2(tx, addr, 0, size);
+  int_stm_free2(tx, addr, 0, size, pool);
 }
 
 

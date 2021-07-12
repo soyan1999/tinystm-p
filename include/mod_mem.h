@@ -56,8 +56,8 @@ extern "C" {
  * @return
  *   Pointer to the allocated memory block.
  */
-void *stm_malloc(size_t size);
-void *stm_malloc_tx(struct stm_tx *tx, size_t size);
+void *stm_malloc(size_t size, uint64_t type_num, PMEMobjpool *pool);
+void *stm_malloc_tx(struct stm_tx *tx, size_t size, uint64_t type_num, PMEMobjpool *pool);
 //@}
 
 //@{
@@ -89,8 +89,8 @@ void *stm_calloc_tx(struct stm_tx *tx, size_t nm, size_t size);
  * @param size
  *   Number of bytes to overwrite.
  */
-void stm_free(void *addr, size_t size);
-void stm_free_tx(struct stm_tx *tx, void *addr, size_t size);
+void stm_free(void *addr, size_t size, PMEMobjpool *pool);
+void stm_free_tx(struct stm_tx *tx, void *addr, size_t size, PMEMobjpool *pool);
 //@}
 
 //@{
