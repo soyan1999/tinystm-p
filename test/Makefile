@@ -1,6 +1,6 @@
 .PHONY:	all
 
-TESTS = intset-p bank-p
+TESTS = intset-p bank-p intset-pobj
 
 .PHONY:	all $(TESTS)
 
