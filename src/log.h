@@ -14,7 +14,7 @@
 # define LAYOUT_NAME "dudetm"
 # ifndef SMALL_POOL
 # define POOL_SIZE (1 * 1024 * 1024 * 1024)
-# elif
+# else
 # define POOL_SIZE (128 * 1024 * 1024)
 # endif
 

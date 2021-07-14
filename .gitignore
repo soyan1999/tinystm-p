@@ -9,3 +9,5 @@
 lib/
 *.pool
 test/bank-p/bank-p
+test/intset-p/intset-*
+test/intset-pobj/intset-*

@@ -62,7 +62,7 @@ void perror(const char *s);
 # define LAYOUT_NAME "pmdk"
 # ifndef SMALL_POOL
 # define POOL_SIZE (1 * 1024 * 1024 * 1024)
-# elif
+# else
 # define POOL_SIZE (128 * 1024 * 1024)
 # endif
 
@@ -194,7 +194,7 @@ static node_t *new_node(val_t val, node_t *next, int transactional)
 {
   node_t *node;
 
-  node = D_RO(TX_NEW(struct node));
+  node = D_RW(TX_NEW(struct node));
 
   node->val = val;
   TOID_ASSIGN(node->next, pmemobj_oid(next));
@@ -211,10 +211,10 @@ static intset_t *set_new()
 
   FILE *r = fopen(POOL_PATH, "r");
   if (r == NULL) {
-    pool = pmemobj_create(POOL_PATH, LAYOUT_NAME, POOL_SIZE, "0666");
+    pool = pmemobj_create(POOL_PATH, LAYOUT_NAME, POOL_SIZE, 0666);
     TX_BEGIN(pool) {
       Set = POBJ_ROOT(pool, struct intset);
-      set = D_RO(Set);
+      set = D_RW(Set);
       TX_ADD(Set);
       max = new_node(VAL_MAX, NULL, 0);
       min = new_node(VAL_MIN, max, 0);
@@ -224,7 +224,7 @@ static intset_t *set_new()
   else {
     fclose(r);
     Set = POBJ_ROOT(pool, struct intset);
-    set = D_RO(Set);
+    set = D_RW(Set);
   }
 
   return set;
@@ -237,8 +237,8 @@ static void set_delete(intset_t *set)
   node = set->head;
 
   TX_BEGIN(pool) {
-    while (D_RO(node) != NULL) {
-      next = D_RO(node)->next;
+    while (D_RW(node) != NULL) {
+      next = D_RW(node)->next;
       TX_FREE(node);
       node = next;
     }
@@ -253,10 +253,10 @@ static int set_size(intset_t *set)
   TOID(struct node) node;
 
   /* We have at least 2 elements */
-  node = D_RO(set->head)->next;
-  while (D_RO(D_RO(node)->next) != NULL) {
+  node = D_RW(set->head)->next;
+  while (D_RW(D_RW(node)->next) != NULL) {
     size++;
-    node = D_RO(node)->next;
+    node = D_RW(node)->next;
   }
 
   return size;
@@ -285,15 +285,15 @@ static int set_contains(intset_t *set, val_t val, thread_data_t *td)
     TX_BEGIN(pool) {
       prev = set->head;
       pmemobj_rwlock_rdlock(pool, &D_RW(prev)->lock);
-      next = D_RO(prev)->next;
+      next = D_RW(prev)->next;
       pmemobj_rwlock_unlock(pool, &D_RW(prev)->lock);
       while (1) {
-        v = D_RO(next)->val;
+        v = D_RW(next)->val;
         if (v >= val)
           break;
         prev = next;
         pmemobj_rwlock_rdlock(pool, &D_RW(prev)->lock);
-        next = D_RO(prev)->next;
+        next = D_RW(prev)->next;
         pmemobj_rwlock_unlock(pool, &D_RW(prev)->lock);
       }
       result = (v == val);
@@ -363,24 +363,24 @@ static int set_add(intset_t *set, val_t val, thread_data_t *td)
     TX_BEGIN(pool) {
       prev = set->head;
       pmemobj_rwlock_rdlock(pool, &D_RW(prev)->lock);
-      next = D_RO(prev)->next;
+      next = D_RW(prev)->next;
       pmemobj_rwlock_unlock(pool, &D_RW(prev)->lock);
       while (1) {
-        v = D_RO(next)->val;
+        v = D_RW(next)->val;
         if (v >= val)
           break;
         prev = next;
         pmemobj_rwlock_rdlock(pool, &D_RW(prev)->lock);
-        next = D_RO(prev)->next;
+        next = D_RW(prev)->next;
         pmemobj_rwlock_unlock(pool, &D_RW(prev)->lock);
       }
       result = (v != val);
       if (result) {
         pmemobj_rwlock_wrlock(pool, &D_RW(prev)->lock);
         // read next point again to avoid prev thread has modified next
-        next = D_RO(prev)->next;
-        TX_ADD_DIRECT(&D_RO(prev)->next);
-        TOID_ASSIGN(D_RW(prev)->next, pmemobj_oid(new_node(val, D_RO(next), 1)));
+        next = D_RW(prev)->next;
+        TX_ADD_DIRECT(&D_RW(prev)->next);
+        TOID_ASSIGN(D_RW(prev)->next, pmemobj_oid(new_node(val, D_RW(next), 1)));
         pmemobj_rwlock_unlock(pool, &D_RW(prev)->lock);
       }
     }TX_END
@@ -456,34 +456,35 @@ static int set_remove(intset_t *set, val_t val, thread_data_t *td)
     //   free(next);
     // }
   } else if (td->unit_tx == 0) {
-    TX_BEGIN(pool) {
-      prev = set->head;
-      pmemobj_rwlock_rdlock(pool, &D_RW(prev)->lock);
-      next = D_RO(prev)->next;
-      pmemobj_rwlock_unlock(pool, &D_RW(prev)->lock);
-      while (1) {
-        v = D_RO(next)->val;
-        if (v >= val)
-          break;
-        prev = next;
+      TX_BEGIN(pool) {
+        prev = set->head;
         pmemobj_rwlock_rdlock(pool, &D_RW(prev)->lock);
-        next = D_RO(prev)->next;
+        next = D_RW(prev)->next;
         pmemobj_rwlock_unlock(pool, &D_RW(prev)->lock);
-      }
-      result = (v == val);
-      if (result) {
-        pmemobj_rwlock_wrlock(pool, &D_RW(prev)->lock);
-        // read next point again to avoid prev thread has modified next
-        next = D_RO(prev)->next;
-        pmemobj_rwlock_wrlock(pool, &D_RW(next)->lock);
-        n = D_RO(next)->next;
-        TX_ADD_DIRECT(&D_RO(prev)->next);
-        D_RW(prev)->next = n;
-        TX_FREE(next);
-        pmemobj_rwlock_unlock(pool, &D_RW(next)->lock);
-        pmemobj_rwlock_unlock(pool, &D_RW(prev)->lock);
-      }
-    }TX_END
+        while (1) {
+          v = D_RW(next)->val;
+          if (v >= val)
+            break;
+          prev = next;
+          pmemobj_rwlock_rdlock(pool, &D_RW(prev)->lock);
+          next = D_RW(prev)->next;
+          pmemobj_rwlock_unlock(pool, &D_RW(prev)->lock);
+        }
+        result = (v == val);
+        if (result) {
+          pmemobj_rwlock_wrlock(pool, &D_RW(prev)->lock);
+          // read next point again to avoid prev thread has modified next
+          next = D_RW(prev)->next;
+          pmemobj_rwlock_wrlock(pool, &D_RW(next)->lock);
+          n = D_RW(next)->next;
+          TX_ADD_DIRECT(&D_RW(prev)->next);
+          D_RW(prev)->next = n;
+          TX_FREE(next);
+          pmemobj_rwlock_unlock(pool, &D_RW(next)->lock);
+          pmemobj_rwlock_unlock(pool, &D_RW(prev)->lock);
+        }
+      }TX_END
+  }
 #ifndef TM_COMPILER
   // else {
   //   /* Unit transactions */

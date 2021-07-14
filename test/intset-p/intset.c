@@ -216,7 +216,7 @@ static node_t *new_node(val_t val, node_t *next, int transactional)
     node->val = val;
     node->next = ptr_to_nv(next);
   } else {
-    node = (node_t *)nv_to_ptr(TM_MALLOC(sizeof(node_t), TYPE_NODE));
+    node = (node_t *)TM_MALLOC(sizeof(node_t), TYPE_NODE);
     TM_STORE(&node->val, val);
     TM_STORE(&node->next, ptr_to_nv(next));
   }
@@ -387,7 +387,7 @@ static int set_add(intset_t *set, val_t val, thread_data_t *td)
     if (result) {
       TX_BEGIN(pool) {
         pmemobj_tx_add_range_direct(&prev->next, sizeof(nv_ptr));
-        prev->next = (node_t *)nv_to_ptr(new_node(val, next, 0));
+        prev->next = ptr_to_nv(new_node(val, next, 0));
       }TX_END
     }
   } else if (td->unit_tx == 0) {

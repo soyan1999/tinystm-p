@@ -2,7 +2,7 @@ ROOT ?= ../..
 
 include $(ROOT)/Makefile.common
 
-BINS = intset-hs intset-ll intset-rb intset-sl
+BINS = intset-ll
 
 UNAME := $(shell uname)
 ifeq ($(UNAME), SunOS)
