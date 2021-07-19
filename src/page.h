@@ -10,7 +10,7 @@
 # ifndef SMALL_POOL
 # define NVM_LENGTH     30
 # define DRAM_LENGTH    30
-# elif
+# else
 # define NVM_LENGTH     27
 # define DRAM_LENGTH    27
 # endif
