@@ -269,7 +269,7 @@ void int_stm_free2(struct stm_tx *tx, void *addr, size_t idx, size_t size, PMEMo
       idx = (idx + 7) >> 3;
       size = (size + 7) >> 3;
     }
-    a = (stm_word_t *)addr + idx;
+    a = (stm_word_t *)ptr_to_nv(addr) + idx;
     while (size-- > 0) {
       /* Acquire lock and update version number */
       stm_store2_tx(tx, a++, 0, 0);

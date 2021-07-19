@@ -66,9 +66,9 @@ void perror(const char *s);
 # define POOL_SIZE (128 * 1024 * 1024)
 # endif
 
-# include "stm.h"
-# include "mod_mem.h"
-# include "mod_ab.h"
+// # include "stm.h"
+// # include "mod_mem.h"
+// # include "mod_ab.h"
 
 /*
  * Useful macros to work with transactions. Note that, to use nested
@@ -87,7 +87,7 @@ void perror(const char *s);
 # define IO_FLUSH                       fflush(NULL)
 /* Note: stdio is thread-safe */
 #endif
-# define USE_LINKEDLIST
+//# define USE_LINKEDLIST
 #if !(defined(USE_LINKEDLIST) || defined(USE_RBTREE) || defined(USE_SKIPLIST) || defined(USE_HASHSET))
 # error "Must define USE_LINKEDLIST or USE_RBTREE or USE_SKIPLIST or USE_HASHSET"
 #endif /* !(defined(USE_LINKEDLIST) || defined(USE_RBTREE) || defined(USE_SKIPLIST) || defined(USE_HASHSET)) */
@@ -223,6 +223,7 @@ static intset_t *set_new()
   }
   else {
     fclose(r);
+    pool = pmemobj_open(POOL_PATH, LAYOUT_NAME);
     Set = POBJ_ROOT(pool, struct intset);
     set = D_RW(Set);
   }
@@ -340,7 +341,7 @@ static int set_contains(intset_t *set, val_t val, thread_data_t *td)
 static int set_add(intset_t *set, val_t val, thread_data_t *td)
 {
   int result;
-  TOID(struct node) prev, next;
+  TOID(struct node) prev, next, ex;
   val_t v;
 
 # ifdef DEBUG
@@ -362,6 +363,7 @@ static int set_add(intset_t *set, val_t val, thread_data_t *td)
   } else if (td->unit_tx == 0) {
     TX_BEGIN(pool) {
       prev = set->head;
+      ex = prev;
       pmemobj_rwlock_rdlock(pool, &D_RW(prev)->lock);
       next = D_RW(prev)->next;
       pmemobj_rwlock_unlock(pool, &D_RW(prev)->lock);
@@ -369,6 +371,7 @@ static int set_add(intset_t *set, val_t val, thread_data_t *td)
         v = D_RW(next)->val;
         if (v >= val)
           break;
+        ex = prev;
         prev = next;
         pmemobj_rwlock_rdlock(pool, &D_RW(prev)->lock);
         next = D_RW(prev)->next;
@@ -376,12 +379,17 @@ static int set_add(intset_t *set, val_t val, thread_data_t *td)
       }
       result = (v != val);
       if (result) {
+        // to avoid link new node to a deleted node, yhe prev node must be locked
+        if (!TOID_EQUALS(ex, prev)) 
+          pmemobj_rwlock_wrlock(pool, &D_RW(ex)->lock);
         pmemobj_rwlock_wrlock(pool, &D_RW(prev)->lock);
         // read next point again to avoid prev thread has modified next
         next = D_RW(prev)->next;
         TX_ADD_DIRECT(&D_RW(prev)->next);
         TOID_ASSIGN(D_RW(prev)->next, pmemobj_oid(new_node(val, D_RW(next), 1)));
         pmemobj_rwlock_unlock(pool, &D_RW(prev)->lock);
+        if (!TOID_EQUALS(ex, prev)) 
+          pmemobj_rwlock_unlock(pool, &D_RW(ex)->lock);
       }
     }TX_END
   } 
@@ -1304,19 +1312,19 @@ static void *test(void *data)
     }
   }
 #ifndef TM_COMPILER
-  stm_get_stats("nb_aborts", &d->nb_aborts);
-  stm_get_stats("nb_aborts_1", &d->nb_aborts_1);
-  stm_get_stats("nb_aborts_2", &d->nb_aborts_2);
-  stm_get_stats("nb_aborts_locked_read", &d->nb_aborts_locked_read);
-  stm_get_stats("nb_aborts_locked_write", &d->nb_aborts_locked_write);
-  stm_get_stats("nb_aborts_validate_read", &d->nb_aborts_validate_read);
-  stm_get_stats("nb_aborts_validate_write", &d->nb_aborts_validate_write);
-  stm_get_stats("nb_aborts_validate_commit", &d->nb_aborts_validate_commit);
-  stm_get_stats("nb_aborts_invalid_memory", &d->nb_aborts_invalid_memory);
-  stm_get_stats("nb_aborts_killed", &d->nb_aborts_killed);
-  stm_get_stats("locked_reads_ok", &d->locked_reads_ok);
-  stm_get_stats("locked_reads_failed", &d->locked_reads_failed);
-  stm_get_stats("max_retries", &d->max_retries);
+  // stm_get_stats("nb_aborts", &d->nb_aborts);
+  // stm_get_stats("nb_aborts_1", &d->nb_aborts_1);
+  // stm_get_stats("nb_aborts_2", &d->nb_aborts_2);
+  // stm_get_stats("nb_aborts_locked_read", &d->nb_aborts_locked_read);
+  // stm_get_stats("nb_aborts_locked_write", &d->nb_aborts_locked_write);
+  // stm_get_stats("nb_aborts_validate_read", &d->nb_aborts_validate_read);
+  // stm_get_stats("nb_aborts_validate_write", &d->nb_aborts_validate_write);
+  // stm_get_stats("nb_aborts_validate_commit", &d->nb_aborts_validate_commit);
+  // stm_get_stats("nb_aborts_invalid_memory", &d->nb_aborts_invalid_memory);
+  // stm_get_stats("nb_aborts_killed", &d->nb_aborts_killed);
+  // stm_get_stats("locked_reads_ok", &d->locked_reads_ok);
+  // stm_get_stats("locked_reads_failed", &d->locked_reads_failed);
+  // stm_get_stats("max_retries", &d->max_retries);
 #endif /* ! TM_COMPILER */
   /* Free transaction */
 
@@ -1348,13 +1356,13 @@ int main(int argc, char **argv)
   int i, c, val, size, ret;
   unsigned long reads, updates;
 #ifndef TM_COMPILER
-  char *s;
+  // char *s;
   unsigned long aborts, aborts_1, aborts_2,
     aborts_locked_read, aborts_locked_write,
     aborts_validate_read, aborts_validate_write, aborts_validate_commit,
     aborts_invalid_memory, aborts_killed,
     locked_reads_ok, locked_reads_failed, max_retries;
-  stm_ab_stats_t ab_stats;
+  // stm_ab_stats_t ab_stats;
 #endif /* ! TM_COMPILER */
   thread_data_t *data;
   pthread_t *threads;
@@ -1542,13 +1550,13 @@ int main(int argc, char **argv)
   printf("Initializing STM\n");
 
 #ifndef TM_COMPILER
-  if (stm_get_parameter("compile_flags", &s))
-    printf("STM flags    : %s\n", s);
+  // if (stm_get_parameter("compile_flags", &s))
+  //   printf("STM flags    : %s\n", s);
 
-  if (cm != NULL) {
-    if (stm_set_parameter("cm_policy", cm) == 0)
-      printf("WARNING: cannot set contention manager \"%s\"\n", cm);
-  }
+  // if (cm != NULL) {
+  //   if (stm_set_parameter("cm_policy", cm) == 0)
+  //     printf("WARNING: cannot set contention manager \"%s\"\n", cm);
+  // }
 #endif /* ! TM_COMPILER */
   if (alternate == 0 && range != initial * 2)
     printf("WARNING: range is not twice the initial set size\n");
@@ -1707,17 +1715,17 @@ int main(int argc, char **argv)
   printf("#lr-failed    : %lu (%f / s)\n", locked_reads_failed, locked_reads_failed * 1000.0 / duration);
   printf("Max retries   : %lu\n", max_retries);
 
-  for (i = 0; stm_get_ab_stats(i, &ab_stats) != 0; i++) {
-    printf("Atomic block  : %d\n", i);
-    printf("  #samples    : %lu\n", ab_stats.samples);
-    printf("  Mean        : %f\n", ab_stats.mean);
-    printf("  Variance    : %f\n", ab_stats.variance);
-    printf("  Min         : %f\n", ab_stats.min); 
-    printf("  Max         : %f\n", ab_stats.max);
-    printf("  50th perc.  : %f\n", ab_stats.percentile_50);
-    printf("  90th perc.  : %f\n", ab_stats.percentile_90);
-    printf("  95th perc.  : %f\n", ab_stats.percentile_95);
-  }
+  // for (i = 0; stm_get_ab_stats(i, &ab_stats) != 0; i++) {
+  //   printf("Atomic block  : %d\n", i);
+  //   printf("  #samples    : %lu\n", ab_stats.samples);
+  //   printf("  Mean        : %f\n", ab_stats.mean);
+  //   printf("  Variance    : %f\n", ab_stats.variance);
+  //   printf("  Min         : %f\n", ab_stats.min); 
+  //   printf("  Max         : %f\n", ab_stats.max);
+  //   printf("  50th perc.  : %f\n", ab_stats.percentile_50);
+  //   printf("  90th perc.  : %f\n", ab_stats.percentile_90);
+  //   printf("  95th perc.  : %f\n", ab_stats.percentile_95);
+  // }
 #endif /* ! TM_COMPILER */
 
   /* Delete set */

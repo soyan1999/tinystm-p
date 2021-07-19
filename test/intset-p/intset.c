@@ -73,10 +73,10 @@ void perror(const char *s);
 # define TM_START_TS(ts, label)             { sigjmp_buf *_e = stm_start((stm_tx_attr_t)0); \
                                               if (_e != NULL && sigsetjmp(*_e, 0)) goto label; \
 	                                      stm_set_extension(0, &ts)
-# define TM_LOAD(addr)                      stm_load((stm_word_t *)addr)
-# define TM_UNIT_LOAD(addr, ts)             stm_unit_load((stm_word_t *)addr, ts)
-# define TM_STORE(addr, value)              stm_store((stm_word_t *)addr, (stm_word_t)value)
-# define TM_UNIT_STORE(addr, value, ts)     stm_unit_store((stm_word_t *)addr, (stm_word_t)value, ts)
+# define TM_LOAD(addr)                      stm_load((stm_word_t *)ptr_to_nv(addr))
+# define TM_UNIT_LOAD(addr, ts)             stm_unit_load((stm_word_t *)ptr_to_nv(addr), ts)
+# define TM_STORE(addr, value)              stm_store((stm_word_t *)ptr_to_nv(addr), (stm_word_t)value)
+# define TM_UNIT_STORE(addr, value, ts)     stm_unit_store((stm_word_t *)ptr_to_nv(addr), (stm_word_t)value, ts)
 # define TM_COMMIT                          stm_commit(); }
 # define TM_MALLOC(size, type_num)          stm_malloc(size, type_num, pool)
 # define TM_FREE(addr)                      stm_free(addr, sizeof(*addr))
@@ -97,7 +97,7 @@ void perror(const char *s);
 # define IO_FLUSH                       fflush(NULL)
 /* Note: stdio is thread-safe */
 #endif
-#define USE_LINKEDLIST
+//#define USE_LINKEDLIST
 #if !(defined(USE_LINKEDLIST) || defined(USE_RBTREE) || defined(USE_SKIPLIST) || defined(USE_HASHSET))
 # error "Must define USE_LINKEDLIST or USE_RBTREE or USE_SKIPLIST or USE_HASHSET"
 #endif /* !(defined(USE_LINKEDLIST) || defined(USE_RBTREE) || defined(USE_SKIPLIST) || defined(USE_HASHSET)) */
@@ -255,7 +255,7 @@ static intset_t *set_new()
   // max = new_node(VAL_MAX, NULL, 0);
   // min = new_node(VAL_MIN, max, 0);
   // set->head = min;
-
+  page_map_init();
   return set;
 }
 
@@ -276,7 +276,7 @@ static void set_delete(intset_t *set)
     root->obj_root[0] = 0;
   }TX_END
 
-  pmemobj_close(pool);
+  // pmemobj_close(pool);
 }
 
 static int set_size(intset_t *set)

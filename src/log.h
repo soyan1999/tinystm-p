@@ -101,16 +101,18 @@ void nv_log_save(); // save all log to nv_heap
 
 
 static void v_log_expand(stm_tx_t *tx) {
-    v_log_head_t *node = tx->addition.v_log_head;
+    v_log_head_t *node = tx->addition.v_log_head, *prev = NULL;
 
-    while (node->next != NULL) {
+    while (node != NULL) {
+        prev = node;
         node = node->next;
     }
 
-    node->next = (v_log_head_t *)malloc(sizeof(v_log_head_t));
-    node->next->num = 0;
-    node->next->next = NULL;
-    if (tx->addition.v_log_head == NULL) tx->addition.v_log_head = node;
+    node = (v_log_head_t *)malloc(sizeof(v_log_head_t));
+    node->num = 0;
+    node->next = NULL;
+    if (prev != NULL) prev->next = node;
+    else tx->addition.v_log_head = node;
 }
 
 void v_log_init(stm_tx_t *tx) {
