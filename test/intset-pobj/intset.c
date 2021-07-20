@@ -87,7 +87,7 @@ void perror(const char *s);
 # define IO_FLUSH                       fflush(NULL)
 /* Note: stdio is thread-safe */
 #endif
-//# define USE_LINKEDLIST
+# define USE_HASHSET
 #if !(defined(USE_LINKEDLIST) || defined(USE_RBTREE) || defined(USE_SKIPLIST) || defined(USE_HASHSET))
 # error "Must define USE_LINKEDLIST or USE_RBTREE or USE_SKIPLIST or USE_HASHSET"
 #endif /* !(defined(USE_LINKEDLIST) || defined(USE_RBTREE) || defined(USE_SKIPLIST) || defined(USE_HASHSET)) */
@@ -243,7 +243,7 @@ static void set_delete(intset_t *set)
       TX_FREE(node);
       node = next;
     }
-    pmemobj_tx_free(pmemobj_oid(set));
+    // pmemobj_tx_free(pmemobj_oid(set));
   }TX_END
   
 }
@@ -349,7 +349,7 @@ static int set_add(intset_t *set, val_t val, thread_data_t *td)
   IO_FLUSH;
 # endif
 
-  if (td == NULL) {
+    // if (td == NULL) {
     // prev = set->head;
     // next = prev->next;
     // while (next->val < val) {
@@ -360,7 +360,7 @@ static int set_add(intset_t *set, val_t val, thread_data_t *td)
     // if (result) {
     //   prev->next = new_node(val, next, 0);
     // }
-  } else if (td->unit_tx == 0) {
+    // } else if (td->unit_tx == 0) {
     TX_BEGIN(pool) {
       prev = set->head;
       ex = prev;
@@ -392,7 +392,7 @@ static int set_add(intset_t *set, val_t val, thread_data_t *td)
           pmemobj_rwlock_unlock(pool, &D_RW(ex)->lock);
       }
     }TX_END
-  } 
+  // } 
 #ifndef TM_COMPILER
   // else {
   //   /* Unit transactions */
@@ -451,7 +451,7 @@ static int set_remove(intset_t *set, val_t val, thread_data_t *td)
   IO_FLUSH;
 # endif
 
-  if (td == NULL) {
+  /* if (td == NULL) {
     // prev = set->head;
     // next = prev->next;
     // while (next->val < val) {
@@ -463,7 +463,7 @@ static int set_remove(intset_t *set, val_t val, thread_data_t *td)
     //   prev->next = next->next;
     //   free(next);
     // }
-  } else if (td->unit_tx == 0) {
+  } else */ if (td->unit_tx == 0) {
       TX_BEGIN(pool) {
         prev = set->head;
         pmemobj_rwlock_rdlock(pool, &D_RW(prev)->lock);
@@ -978,21 +978,30 @@ static int set_remove(intset_t *set, val_t val, thread_data_t *td)
  * HASHSET
  * ################################################################### */
 
+POBJ_LAYOUT_BEGIN(intset);
+POBJ_LAYOUT_ROOT(intset, struct intset);
+POBJ_LAYOUT_TOID(intset, struct bucket);
+POBJ_LAYOUT_END(intset);
+
 # define INIT_SET_PARAMETERS            /* Nothing */
 
 # define NB_BUCKETS                     (1UL << 17)
 
 # define HASH(a)                        (hash((uint32_t)a) & (NB_BUCKETS - 1))
 
+# define POOL_PATH "./intset-hs.pool"
+# define LAYOUT_NAME "pmdk"
+
 typedef intptr_t val_t;
 
 typedef struct bucket {
   val_t val;
-  struct bucket *next;
+  TOID(struct bucket) next;
 } bucket_t;
 
 typedef struct intset {
-  bucket_t **buckets;
+  TOID(struct bucket) buckets[NB_BUCKETS];
+  PMEMrwlock locks[NB_BUCKETS];
 } intset_t;
 
 TM_PURE
@@ -1008,18 +1017,10 @@ static bucket_t *new_entry(val_t val, bucket_t *next, int transactional)
 {
   bucket_t *b;
 
-  if (!transactional) {
-    b = (bucket_t *)malloc(sizeof(bucket_t));
-  } else {
-    b = (bucket_t *)TM_MALLOC(sizeof(bucket_t));
-  }
-  if (b == NULL) {
-    perror("malloc");
-    exit(1);
-  }
+  b = D_RW(TX_NEW(struct bucket));
 
   b->val = val;
-  b->next = next;
+  TOID_ASSIGN(b->next, pmemobj_oid(next));
 
   return b;
 }
@@ -1027,14 +1028,26 @@ static bucket_t *new_entry(val_t val, bucket_t *next, int transactional)
 static intset_t *set_new()
 {
   intset_t *set;
+  TOID(struct intset) Set;
 
-  if ((set = (intset_t *)malloc(sizeof(intset_t))) == NULL) {
-    perror("malloc");
-    exit(1);
+  FILE *r = fopen(POOL_PATH, "r");
+  if (r == NULL) {
+    pool = pmemobj_create(POOL_PATH, LAYOUT_NAME, POOL_SIZE, 0666);
+    TX_BEGIN(pool) {
+      Set = POBJ_ROOT(pool, struct intset);
+      set = D_RW(Set);
+      TX_ADD(Set);
+      for (unsigned int i = 0; i < NB_BUCKETS; i ++) {
+        TOID_ASSIGN(set->buckets[i], pmemobj_oid(NULL));
+        pmemobj_rwlock_zero(pool, &set->locks[i]);
+      }
+    }TX_END
   }
-  if ((set->buckets = (bucket_t **)calloc(NB_BUCKETS, sizeof(bucket_t *))) == NULL) {
-    perror("calloc");
-    exit(1);
+  else {
+    fclose(r);
+    pool = pmemobj_open(POOL_PATH, LAYOUT_NAME);
+    Set = POBJ_ROOT(pool, struct intset);
+    set = D_RW(Set);
   }
 
   return set;
@@ -1043,31 +1056,31 @@ static intset_t *set_new()
 static void set_delete(intset_t *set)
 {
   unsigned int i;
-  bucket_t *b, *next;
+  TOID(struct bucket) b, next;
 
-  for (i = 0; i < NB_BUCKETS; i++) {
-    b = set->buckets[i];
-    while (b != NULL) {
-      next = b->next;
-      free(b);
-      b = next;
+  TX_BEGIN(pool) {
+    for (i = 0; i < NB_BUCKETS; i++) {
+      b = set->buckets[i];
+      while (D_RW(b) != NULL) {
+        next = D_RW(b)->next;
+        TX_FREE(b);
+        b = next;
+      }
     }
-  }
-  free(set->buckets);
-  free(set);
+  }TX_END
 }
 
 static int set_size(intset_t *set)
 {
   int size = 0;
   unsigned int i;
-  bucket_t *b;
+  TOID(struct bucket) b;
 
   for (i = 0; i < NB_BUCKETS; i++) {
     b = set->buckets[i];
-    while (b != NULL) {
+    while (D_RW(b) != NULL) {
       size++;
-      b = b->next;
+      b = D_RW(b)->next;
     }
   }
 
@@ -1077,7 +1090,7 @@ static int set_size(intset_t *set)
 static int set_contains(intset_t *set, val_t val, thread_data_t *td)
 {
   int result, i;
-  bucket_t *b;
+  TOID(struct bucket) b;
 
 # ifdef DEBUG
   printf("++> set_contains(%d)\n", val);
@@ -1085,29 +1098,31 @@ static int set_contains(intset_t *set, val_t val, thread_data_t *td)
 # endif
 
   if (!td) {
-    i = HASH(val);
-    b = set->buckets[i];
-    result = 0;
-    while (b != NULL) {
-      if (b->val == val) {
-        result = 1;
-        break;
-      }
-      b = b->next;
-    }
+    // i = HASH(val);
+    // b = set->buckets[i];
+    // result = 0;
+    // while (b != NULL) {
+    //   if (b->val == val) {
+    //     result = 1;
+    //     break;
+    //   }
+    //   b = b->next;
+    // }
   } else {
-    TM_START(0, RO);
-    i = HASH(val);
-    b = (bucket_t *)TM_LOAD(&set->buckets[i]);
-    result = 0;
-    while (b != NULL) {
-      if (TM_LOAD(&b->val) == val) {
-        result = 1;
-        break;
+    TX_BEGIN(pool) {
+      i = HASH(val);
+      pmemobj_rwlock_rdlock(pool, &set->locks[i]);
+      b = set->buckets[i];
+      result = 0;
+      while (D_RW(b) != NULL) {
+        if (D_RW(b)->val == val) {
+          result = 1;
+          break;
+        }
+        b = D_RW(b)->next;
       }
-      b = (bucket_t *)TM_LOAD(&b->next);
-    }
-    TM_COMMIT;
+      pmemobj_rwlock_unlock(pool, &set->locks[i]);
+    }TX_END
   }
 
   return result;
@@ -1116,44 +1131,47 @@ static int set_contains(intset_t *set, val_t val, thread_data_t *td)
 static int set_add(intset_t *set, val_t val, thread_data_t *td)
 {
   int result, i;
-  bucket_t *b, *first;
+  TOID(struct bucket) b, first;
 
 # ifdef DEBUG
   printf("++> set_add(%d)\n", val);
   IO_FLUSH;
 # endif
 
-  if (!td) {
+  // if (!td) {
+  //   i = HASH(val);
+  //   first = b = set->buckets[i];
+  //   result = 1;
+  //   while (b != NULL) {
+  //     if (b->val == val) {
+  //       result = 0;
+  //       break;
+  //     }
+  //     b = b->next;
+  //   }
+  //   if (result) {
+  //     set->buckets[i] = new_entry(val, first, 0);
+  //   }
+  // } else {
+  TX_BEGIN(pool) {
     i = HASH(val);
+    pmemobj_rwlock_wrlock(pool, &set->locks[i]);
     first = b = set->buckets[i];
     result = 1;
-    while (b != NULL) {
-      if (b->val == val) {
+    while (D_RW(b) != NULL) {
+      if (D_RW(b)->val == val) {
         result = 0;
         break;
       }
-      b = b->next;
+      b = D_RW(b)->next;
     }
     if (result) {
-      set->buckets[i] = new_entry(val, first, 0);
+      TX_ADD_DIRECT(&set->buckets[i]);
+      TOID_ASSIGN(set->buckets[i], pmemobj_oid(new_entry(val, D_RW(first), 1)));
     }
-  } else {
-    TM_START(0, RW);
-    i = HASH(val);
-    first = b = (bucket_t *)TM_LOAD(&set->buckets[i]);
-    result = 1;
-    while (b != NULL) {
-      if (TM_LOAD(&b->val) == val) {
-        result = 0;
-        break;
-      }
-      b = (bucket_t *)TM_LOAD(&b->next);
-    }
-    if (result) {
-      TM_STORE(&set->buckets[i], new_entry(val, first, 1));
-    }
-    TM_COMMIT;
-  }
+    pmemobj_rwlock_unlock(pool, &set->locks[i]);
+  }TX_END
+  // }
 
   return result;
 }
@@ -1161,59 +1179,61 @@ static int set_add(intset_t *set, val_t val, thread_data_t *td)
 static int set_remove(intset_t *set, val_t val, thread_data_t *td)
 {
   int result, i;
-  bucket_t *b, *prev;
+  TOID(struct bucket) b, prev;
 
 # ifdef DEBUG
   printf("++> set_remove(%d)\n", val);
   IO_FLUSH;
 # endif
 
-  if (!td) {
+  // if (!td) {
+  //   i = HASH(val);
+  //   prev = b = set->buckets[i];
+  //   result = 0;
+  //   while (b != NULL) {
+  //     if (b->val == val) {
+  //       result = 1;
+  //       break;
+  //     }
+  //     prev = b;
+  //     b = b->next;
+  //   }
+  //   if (result) {
+  //     if (prev == b) {
+  //       /* First element of bucket */
+  //       set->buckets[i] = b->next;
+  //     } else {
+  //       prev->next = b->next;
+  //     }
+  //     free(b);
+  //   }
+  // } else {
+    TX_BEGIN(pool) {
     i = HASH(val);
+    pmemobj_rwlock_wrlock(pool, &set->locks[i]);
     prev = b = set->buckets[i];
     result = 0;
-    while (b != NULL) {
-      if (b->val == val) {
+    while (D_RW(b) != NULL) {
+      if (D_RW(b)->val == val) {
         result = 1;
         break;
       }
       prev = b;
-      b = b->next;
+      b = D_RW(b)->next;
     }
     if (result) {
-      if (prev == b) {
-        /* First element of bucket */
-        set->buckets[i] = b->next;
+      if (TOID_EQUALS(prev, b)) {
+        TX_ADD_DIRECT(&set->buckets[i]);
+        set->buckets[i] = D_RW(b)->next;
       } else {
-        prev->next = b->next;
+        TX_ADD(prev);
+        D_RW(prev)->next = D_RW(b)->next;
       }
-      free(b);
+      TX_FREE(b);
     }
-  } else {
-    TM_START(0, RW);
-    i = HASH(val);
-    prev = b = (bucket_t *)TM_LOAD(&set->buckets[i]);
-    result = 0;
-    while (b != NULL) {
-      if (TM_LOAD(&b->val) == val) {
-        result = 1;
-        break;
-      }
-      prev = b;
-      b = (bucket_t *)TM_LOAD(&b->next);
-    }
-    if (result) {
-      if (prev == b) {
-        /* First element of bucket */
-        TM_STORE(&set->buckets[i], TM_LOAD(&b->next));
-      } else {
-        TM_STORE(&prev->next, TM_LOAD(&b->next));
-      }
-      /* Free memory (delayed until commit) */
-      TM_FREE2(b, sizeof(bucket_t));
-    }
-    TM_COMMIT;
-  }
+    pmemobj_rwlock_unlock(pool, &set->locks[i]);
+  }TX_END
+  // }
 
   return result;
 }
