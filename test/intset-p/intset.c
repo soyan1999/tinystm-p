@@ -79,7 +79,7 @@ void perror(const char *s);
 # define TM_UNIT_STORE(addr, value, ts)     stm_unit_store((stm_word_t *)ptr_to_nv(addr), (stm_word_t)value, ts)
 # define TM_COMMIT                          stm_commit(); }
 # define TM_MALLOC(size, type_num)          stm_malloc(size, type_num, pool)
-# define TM_FREE(addr)                      stm_free(addr, sizeof(*addr))
+# define TM_FREE(addr)                      stm_free(addr, sizeof(*addr), pool)
 # define TM_FREE2(addr, size)               stm_free(addr, size, pool)
 
 # define TM_INIT                            stm_init(); mod_mem_init(0); mod_ab_init(0, NULL)

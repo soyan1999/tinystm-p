@@ -111,7 +111,9 @@ struct rbtree {
 #define LDV(a)              (a)
 #define STV(a,v)            (a) = (v)
 #define LDF(o,f)            ((o)->f)
+#define LDF_P(o,f)          (nv_to_ptr((o)->f))
 #define STF(o,f,v)          ((o)->f) = (v)
+#define STF_P(o,f,v)        ((o)->f) = ptr_to_nv(v)
 #define LDNODE(o,f)         ((node_t*)(LDF((o),f)))
 
 #define TX_LDA(a)           TM_SHARED_READ(*(a))
@@ -119,9 +121,9 @@ struct rbtree {
 #define TX_LDV(a)           TM_SHARED_READ(a)
 #define TX_STV(a,v)         TM_SHARED_WRITE_P(a, v)
 #define TX_LDF(o,f)         ((long)TM_SHARED_READ((o)->f))
-#define TX_LDF_P(o,f)       ((void*)TM_SHARED_READ_P((o)->f))
+#define TX_LDF_P(o,f)       (nv_to_ptr(TM_SHARED_READ_P((o)->f)))
 #define TX_STF(o,f,v)       TM_SHARED_WRITE((o)->f, v)
-#define TX_STF_P(o,f,v)     TM_SHARED_WRITE_P((o)->f, v)
+#define TX_STF_P(o,f,v)     TM_SHARED_WRITE_P((o)->f, ptr_to_nv(v))
 #define TX_LDNODE(o,f)      ((node_t*)(TX_LDF_P((o),f)))
 
 /* =============================================================================
@@ -241,7 +243,7 @@ TMlookup (TM_ARGDECL  rbtree_t* s, void* k)
     node_t* p = TX_LDNODE(s, root);
 
     while (p != NULL) {
-        long cmp = s->compare(k, TX_LDF_P(p, k));
+        long cmp = s->compare(k, TX_LDF(p, k));
         if (cmp == 0) {
             return p;
         }
@@ -637,13 +639,13 @@ insert (rbtree_t* s, void* k, void* v, node_t* n)
             return NULL;
         }
         /* Note: the following STs don't really need to be transactional */
-        STF(n, l, NULL);
-        STF(n, r, NULL);
-        STF(n, p, NULL);
+        STF_P(n, l, (node_t*)NULL);
+        STF_P(n, r, (node_t*)NULL);
+        STF_P(n, p, (node_t*)NULL);
         STF(n, k, k);
         STF(n, v, v);
         STF(n, c, BLACK);
-        STF(s, root, n);
+        STF_P(s, root, n);
         return NULL;
     }
 
@@ -656,12 +658,12 @@ insert (rbtree_t* s, void* k, void* v, node_t* n)
             if (tl != NULL) {
                 t = tl;
             } else {
-                STF(n, l, NULL);
-                STF(n, r, NULL);
+                STF_P(n, l, (node_t*)NULL);
+                STF_P(n, r, (node_t*)NULL);
                 STF(n, k, k);
                 STF(n, v, v);
-                STF(n, p, t);
-                STF(t, l, n);
+                STF_P(n, p, t);
+                STF_P(t, l, n);
                 FIX_AFTER_INSERTION(s, n);
                 return NULL;
             }
@@ -670,12 +672,12 @@ insert (rbtree_t* s, void* k, void* v, node_t* n)
             if (tr != NULL) {
                 t = tr;
             } else {
-                STF(n, l, NULL);
-                STF(n, r, NULL);
+                STF_P(n, l, (node_t*)NULL);
+                STF_P(n, r, (node_t*)NULL);
                 STF(n, k, k);
                 STF(n, v, v);
-                STF(n, p, t);
-                STF(t, r, n);
+                STF_P(n, p, t);
+                STF_P(t, r, n);
                 FIX_AFTER_INSERTION(s, n);
                 return NULL;
             }
@@ -709,7 +711,7 @@ TMinsert (TM_ARGDECL  rbtree_t* s, void* k, void* v, node_t* n)
     }
 
     for (;;) {
-        long cmp = s->compare(k, TX_LDF_P(t, k));
+        long cmp = s->compare(k, TX_LDF(t, k));
         if (cmp == 0) {
             return t;
         } else if (cmp < 0) {
@@ -1029,8 +1031,8 @@ TMdelete (TM_ARGDECL  rbtree_t* s, node_t* p)
      */
     if (TX_LDNODE(p, l) != NULL && TX_LDNODE(p, r) != NULL) {
         node_t* s = TX_SUCCESSOR(p);
-        TX_STF(p,k, TX_LDF_P(s, k));
-        TX_STF(p,v, TX_LDF_P(s, v));
+        TX_STF(p,k, TX_LDF(s, k));
+        TX_STF(p,v, TX_LDF(s, v));
         p = s;
     } /* p has 2 children */
 
@@ -1540,7 +1542,7 @@ void*
 TMrbtree_get (TM_ARGDECL  rbtree_t* r, void* key) {
     node_t* n = TX_LOOKUP(r, key);
     if (n != NULL) {
-        void* val = TX_LDF_P(n, v);
+        void* val = TX_LDF(n, v);
         return val;
     }
     return NULL;
