@@ -246,6 +246,9 @@ static intset_t *set_new()
     max = new_node(VAL_MAX, NULL, 0);
     min = new_node(VAL_MIN, max, 0);
     set->head = ptr_to_nv(min);
+
+    pmemobj_tx_add_range_direct(&root->obj_root[0], sizeof(nv_ptr));
+    root->obj_root[0] = ptr_to_nv(set);
   }TX_END
 
   // if ((set = (intset_t *)malloc(sizeof(intset_t))) == NULL) {
@@ -578,12 +581,29 @@ static long compare(const void *a, const void *b)
 
 static intset_t *set_new()
 {
-  return (intset_t *)rbtree_alloc(&compare);
+  intset_t *set;
+  pool = pool_init("intset-ll.pool");
+  PMEMoid Root = pmemobj_root(pool, sizeof(struct root));
+  root = pmemobj_direct(Root);
+  if (root->obj_root[0] != 0) return (intset_t *)nv_to_ptr(root->obj_root[0]);
+
+  TX_BEGIN(pool) {
+    set = (intset_t *)rbtree_alloc(&compare);
+    pmemobj_tx_add_range_direct(&root->obj_root[0], sizeof(nv_ptr));
+    root->obj_root[0] = ptr_to_nv(set);
+  }TX_END
+
+  page_map_init();
+  return set;
 }
 
 static void set_delete(intset_t *set)
 {
-  rbtree_free((rbtree_t *)set);
+  TX_BEGIN(pool) {
+    rbtree_free((rbtree_t *)set);
+    pmemobj_tx_add_range_direct(&root->obj_root[0], sizeof(nv_ptr));
+    root->obj_root[0] = 0;
+  }TX_END
 }
 
 static int set_size(intset_t *set)
@@ -633,7 +653,9 @@ static int set_add(intset_t *set, val_t val, thread_data_t *td)
 # endif
 
   if (!td) {
-    result = rbtree_insert((rbtree_t *)set, (void *)val, (void *)val);
+    TX_BEGIN(pool){
+      result = rbtree_insert((rbtree_t *)set, (void *)val, (void *)val);
+    }TX_END
   } else {
     TM_START(1, RW);
     result = TMrbtree_insert((rbtree_t *)set, (void *)val, (void *)val);
@@ -653,7 +675,9 @@ static int set_remove(intset_t *set, val_t val, thread_data_t *td)
 # endif
 
   if (!td) {
-    result = rbtree_delete((rbtree_t *)set, (void *)val);
+    TX_BEGIN(pool){
+      result = rbtree_delete((rbtree_t *)set, (void *)val);
+    }TX_END
   } else {
     TM_START(2, RW);
     result = TMrbtree_delete((rbtree_t *)set, (void *)val);

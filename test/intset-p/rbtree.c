@@ -89,18 +89,23 @@
 #include "tm.h"
 
 
+enum {
+  TYPE_NODE = 2,
+  TYPE_RBTREE
+};
+
 typedef struct node {
     void* k;
     void* v;
-    struct node* p;
-    struct node* l;
-    struct node* r;
+    nv_ptr p;
+    nv_ptr l;
+    nv_ptr r;
     long c;
 } node_t;
 
 
 struct rbtree {
-    node_t* root;
+    nv_ptr root;
     /* TODO Check if set TM_PURE or use directly the function */
     TM_PURE
     long (*compare)(const void*, const void*);   /* returns {-1,0,1}, 0 -> equal */
@@ -111,17 +116,19 @@ struct rbtree {
 #define LDV(a)              (a)
 #define STV(a,v)            (a) = (v)
 #define LDF(o,f)            ((o)->f)
-#define LDF_P(o,f)          (nv_to_ptr((o)->f))
-#define STF(o,f,v)          ((o)->f) = (v)
-#define STF_P(o,f,v)        ((o)->f) = ptr_to_nv(v)
-#define LDNODE(o,f)         ((node_t*)(LDF((o),f)))
+#define LDF_P(o,f)          ((node_t*)nv_to_ptr((o)->f))
+#define STF(o,f,v)          pmemobj_tx_add_range_direct(&((o)->f), sizeof(nv_ptr));\
+                            ((o)->f) = (v)
+#define STF_P(o,f,v)        pmemobj_tx_add_range_direct(&((o)->f), sizeof(nv_ptr));\
+                            ((o)->f) = ptr_to_nv(v)
+#define LDNODE(o,f)         ((node_t*)(LDF_P((o),f)))
 
 #define TX_LDA(a)           TM_SHARED_READ(*(a))
 #define TX_STA(a,v)         TM_SHARED_WRITE(*(a), v)
 #define TX_LDV(a)           TM_SHARED_READ(a)
 #define TX_STV(a,v)         TM_SHARED_WRITE_P(a, v)
 #define TX_LDF(o,f)         ((long)TM_SHARED_READ((o)->f))
-#define TX_LDF_P(o,f)       (nv_to_ptr(TM_SHARED_READ_P((o)->f)))
+#define TX_LDF_P(o,f)       ((node_t*)nv_to_ptr(TM_SHARED_READ_P((o)->f)))
 #define TX_STF(o,f,v)       TM_SHARED_WRITE((o)->f, v)
 #define TX_STF_P(o,f,v)     TM_SHARED_WRITE_P((o)->f, ptr_to_nv(v))
 #define TX_LDNODE(o,f)      ((node_t*)(TX_LDF_P((o),f)))
@@ -221,7 +228,7 @@ lookup (rbtree_t* s, void* k)
     node_t* p = LDNODE(s, root);
 
     while (p != NULL) {
-        long cmp = s->compare(k, LDF(p, k));
+        long cmp = s->compare(k, (void *)LDF(p, k));
         if (cmp == 0) {
             return p;
         }
@@ -243,7 +250,7 @@ TMlookup (TM_ARGDECL  rbtree_t* s, void* k)
     node_t* p = TX_LDNODE(s, root);
 
     while (p != NULL) {
-        long cmp = s->compare(k, TX_LDF(p, k));
+        long cmp = s->compare(k, (void *)TX_LDF(p, k));
         if (cmp == 0) {
             return p;
         }
@@ -277,22 +284,22 @@ rotateLeft (rbtree_t* s, node_t* x)
 {
     node_t* r = LDNODE(x, r); /* AKA r, y */
     node_t* rl = LDNODE(r, l);
-    STF(x, r, rl);
+    STF_P(x, r, rl);
     if (rl != NULL) {
-        STF(rl, p, x);
+        STF_P(rl, p, x);
     }
     /* TODO: compute p = xp = x->p.  Use xp for R-Values in following */
     node_t* xp = LDNODE(x, p);
-    STF(r, p, xp);
+    STF_P(r, p, xp);
     if (xp == NULL) {
-        STF(s, root, r);
+        STF_P(s, root, r);
     } else if (LDNODE(xp, l) == x) {
-        STF(xp, l, r);
+        STF_P(xp, l, r);
     } else {
-        STF(xp, r, r);
+        STF_P(xp, r, r);
     }
-    STF(r, l, x);
-    STF(x, p, r);
+    STF_P(r, l, x);
+    STF_P(x, p, r);
 }
 #define ROTATE_LEFT(set, node)  rotateLeft(set, node)
 
@@ -335,21 +342,21 @@ rotateRight (rbtree_t* s, node_t* x)
 {
     node_t* l = LDNODE(x, l); /* AKA l,y */
     node_t* lr = LDNODE(l, r);
-    STF(x, l, lr);
+    STF_P(x, l, lr);
     if (lr != NULL) {
-        STF(lr, p, x);
+        STF_P(lr, p, x);
     }
     node_t* xp = LDNODE(x, p);
-    STF(l, p, xp);
+    STF_P(l, p, xp);
     if (xp == NULL) {
-        STF(s, root, l);
+        STF_P(s, root, l);
     } else if (LDNODE(xp, r) == x) {
-        STF(xp, r, l);
+        STF_P(xp, r, l);
     } else {
-        STF(xp, l, l);
+        STF_P(xp, l, l);
     }
-    STF(l, r, x);
-    STF(x, p, l);
+    STF_P(l, r, x);
+    STF_P(x, p, l);
 }
 #define ROTATE_RIGHT(set, node)  rotateRight(set, node)
 
@@ -461,7 +468,7 @@ TMrightOf (TM_ARGDECL  node_t* n)
 static inline long
 colorOf (node_t* n)
 {
-    return (n ? (long)LDNODE(n, c) : BLACK);
+    return (n ? (long)LDF(n, c) : BLACK);
 }
 #define COLOR_OF(n)  colorOf(n)
 
@@ -650,7 +657,7 @@ insert (rbtree_t* s, void* k, void* v, node_t* n)
     }
 
     for (;;) {
-        long cmp = s->compare(k, LDF(t, k));
+        long cmp = s->compare(k, (void *)LDF(t, k));
         if (cmp == 0) {
             return t;
         } else if (cmp < 0) {
@@ -711,7 +718,7 @@ TMinsert (TM_ARGDECL  rbtree_t* s, void* k, void* v, node_t* n)
     }
 
     for (;;) {
-        long cmp = s->compare(k, TX_LDF(t, k));
+        long cmp = s->compare(k, (void *)TX_LDF(t, k));
         if (cmp == 0) {
             return t;
         } else if (cmp < 0) {
@@ -966,8 +973,8 @@ delete_node (rbtree_t* s, node_t* p)
      */
     if (LDNODE(p, l) != NULL && LDNODE(p, r) != NULL) {
         node_t* s = SUCCESSOR(p);
-        STF(p, k, LDNODE(s, k));
-        STF(p, v, LDNODE(s, v));
+        STF(p, k, LDF(s, k));
+        STF(p, v, LDF(s, v));
         p = s;
     } /* p has 2 children */
 
@@ -978,27 +985,27 @@ delete_node (rbtree_t* s, node_t* p)
     if (replacement != NULL) {
         /* Link replacement to parent */
         /* TODO: precompute pp = p->p and substitute below ... */
-        STF (replacement, p, LDNODE(p, p));
+        STF_P (replacement, p, LDNODE(p, p));
         node_t* pp = LDNODE(p, p);
         if (pp == NULL) {
-            STF(s, root, replacement);
+            STF_P(s, root, replacement);
         } else if (p == LDNODE(pp, l)) {
-            STF(pp, l, replacement);
+            STF_P(pp, l, replacement);
         } else {
-            STF(pp, r, replacement);
+            STF_P(pp, r, replacement);
         }
 
         /* Null out links so they are OK to use by fixAfterDeletion */
-        STF(p, l, NULL);
-        STF(p, r, NULL);
-        STF(p, p, NULL);
+        STF_P(p, l, NULL);
+        STF_P(p, r, NULL);
+        STF_P(p, p, NULL);
 
         /* Fix replacement */
         if (LDF(p,c) == BLACK) {
             FIX_AFTER_DELETION(s, replacement);
         }
     } else if (LDNODE(p, p) == NULL) { /* return if we are the only node */
-        STF(s, root, NULL);
+        STF_P(s, root, NULL);
     } else { /* No children. Use self as phantom replacement and unlink */
         if (LDF(p, c) == BLACK) {
             FIX_AFTER_DELETION(s, p);
@@ -1006,11 +1013,11 @@ delete_node (rbtree_t* s, node_t* p)
         node_t* pp = LDNODE(p, p);
         if (pp != NULL) {
             if (p == LDNODE(pp, l)) {
-                STF(pp,l, NULL);
+                STF_P(pp,l, NULL);
             } else if (p == LDNODE(pp, r)) {
-                STF(pp, r, NULL);
+                STF_P(pp, r, NULL);
             }
-            STF(p, p, NULL);
+            STF_P(p, p, NULL);
         }
     }
     return p;
@@ -1095,10 +1102,10 @@ TMdelete (TM_ARGDECL  rbtree_t* s, node_t* p)
 static node_t*
 firstEntry (rbtree_t* s)
 {
-    node_t* p = s->root;
+    node_t* p = LDF_P(s, root);
     if (p != NULL) {
-        while (p->l != NULL) {
-            p = p->l;
+        while (LDF_P(p, l) != NULL) {
+            p = LDF_P(p, l);
         }
     }
     return p;
@@ -1165,8 +1172,8 @@ verifyRedBlack (node_t* root, long depth)
         return 1;
     }
 
-    height_left  = verifyRedBlack(root->l, depth+1);
-    height_right = verifyRedBlack(root->r, depth+1);
+    height_left  = verifyRedBlack(LDF_P(root, l), depth+1);
+    height_right = verifyRedBlack(LDF_P(root, r), depth+1);
     if (height_left == 0 || height_right == 0) {
         return 0;
     }
@@ -1174,26 +1181,26 @@ verifyRedBlack (node_t* root, long depth)
         printf(" Imbalance @depth=%ld : %ld %ld\n", depth, height_left, height_right);
     }
 
-    if (root->l != NULL && root->l->p != root) {
+    if (LDF_P(root, l) != NULL && LDF_P(LDF_P(root, l), p) != root) {
        printf(" lineage\n");
     }
-    if (root->r != NULL && root->r->p != root) {
+    if (LDF_P(root, r) != NULL && LDF_P(LDF_P(root, r), p) != root) {
        printf(" lineage\n");
     }
 
     /* Red-Black alternation */
-    if (root->c == RED) {
-        if (root->l != NULL && root->l->c != BLACK) {
+    if (LDF(root, c) == RED) {
+        if (LDF_P(root, l) != NULL && LDF(LDF_P(root, l), c) != BLACK) {
           printf("VERIFY %d\n", __LINE__);
           return 0;
         }
-        if (root->r != NULL && root->r->c != BLACK) {
+        if (LDF_P(root, r) != NULL && LDF(LDF_P(root, r), c) != BLACK) {
           printf("VERIFY %d\n", __LINE__);
           return 0;
         }
         return height_left;
     }
-    if (root->c != BLACK) {
+    if (LDF(root, c) != BLACK) {
         printf("VERIFY %d\n", __LINE__);
         return 0;
     }
@@ -1209,7 +1216,7 @@ verifyRedBlack (node_t* root, long depth)
 long
 rbtree_verify (rbtree_t* s, long verbose)
 {
-    node_t* root = s->root;
+    node_t* root = LDF_P(s, root);
     if (root == NULL) {
         return 1;
     }
@@ -1217,14 +1224,14 @@ rbtree_verify (rbtree_t* s, long verbose)
        printf("Integrity check: ");
     }
 
-    if (root->p != NULL) {
+    if (LDF_P(root, p) != NULL) {
         printf("  (WARNING) root %lX parent=%lX\n",
-               (unsigned long)root, (unsigned long)root->p);
+               (unsigned long)root, (unsigned long)LDF_P(root, p));
         return -1;
     }
-    if (root->c != BLACK) {
+    if (LDF(root, c) != BLACK) {
         printf("  (WARNING) root %lX color=%lX\n",
-               (unsigned long)root, (unsigned long)root->c);
+               (unsigned long)root, (unsigned long)LDF(root, c));
     }
 
     /* Weak check of binary-tree property */
@@ -1232,22 +1239,22 @@ rbtree_verify (rbtree_t* s, long verbose)
     node_t* its = firstEntry(s);
     while (its != NULL) {
         ctr++;
-        node_t* child = its->l;
-        if (child != NULL && child->p != its) {
+        node_t* child = LDF_P(its, l);
+        if (child != NULL && LDF_P(child, p) != its) {
             printf("Bad parent\n");
         }
-        child = its->r;
-        if (child != NULL && child->p != its) {
+        child = LDF_P(its, r);
+        if (child != NULL && LDF_P(child, p) != its) {
             printf("Bad parent\n");
         }
         node_t* nxt = successor(its);
         if (nxt == NULL) {
             break;
         }
-        if (s->compare(its->k, nxt->k) >= 0) {
+        if (s->compare((void *)LDF(its, k), (void *)LDF(nxt, k)) >= 0) {
             printf("Key order %lX (%ld %ld) %lX (%ld %ld)\n",
-                   (unsigned long)its, (long)its->k, (long)its->v,
-                   (unsigned long)nxt, (long)nxt->k, (long)nxt->v);
+                   (unsigned long)its, (long)LDF(its, k), (long)LDF(its, v),
+                   (unsigned long)nxt, (long)LDF(nxt, k), (long)LDF(nxt, v));
             return -3;
         }
         its = nxt;
@@ -1280,10 +1287,10 @@ compareKeysDefault (const void* a, const void* b)
 rbtree_t*
 rbtree_alloc (long (*compare)(const void*, const void*))
 {
-    rbtree_t* n = (rbtree_t* )malloc(sizeof(*n));
+    rbtree_t* n = (rbtree_t* )pmemobj_direct(pmemobj_tx_zalloc(sizeof(rbtree_t), TYPE_RBTREE));
     if (n) {
         n->compare = (compare ? compare : &compareKeysDefault);
-        n->root = NULL;
+        STF_P(n, root, NULL);
     }
     return n;
 }
@@ -1296,10 +1303,10 @@ rbtree_alloc (long (*compare)(const void*, const void*))
 rbtree_t*
 TMrbtree_alloc (TM_ARGDECL  long (*compare)(const void*, const void*))
 {
-    rbtree_t* n = (rbtree_t* )TM_MALLOC(sizeof(*n));
+    rbtree_t* n = (rbtree_t* )TM_MALLOC(sizeof(*n), TYPE_NODE);
     if (n){
         n->compare = (compare ? compare : &compareKeysDefault);
-        n->root = NULL;
+        TX_STF_P(n, root, NULL);
     }
     return n;
 }
@@ -1313,7 +1320,7 @@ static void
 releaseNode (node_t* n)
 {
 #ifndef SIMULATOR
-    free(n);
+    pmemobj_tx_free(pmemobj_oid(n));
 #endif    
 }
 
@@ -1337,8 +1344,8 @@ static void
 freeNode (node_t* n)
 {
     if (n) {
-        freeNode(n->l);
-        freeNode(n->r);
+        freeNode(LDF_P(n, l));
+        freeNode(LDF_P(n, r));
         releaseNode(n);
     }
 }
@@ -1352,8 +1359,8 @@ static void
 TMfreeNode (TM_ARGDECL  node_t* n)
 {
     if (n) {
-        TMfreeNode(TM_ARG  n->l);
-        TMfreeNode(TM_ARG  n->r);
+        TMfreeNode(TM_ARG  LDF_P(n, l));
+        TMfreeNode(TM_ARG  LDF_P(n, r));
         TMreleaseNode(TM_ARG  n);
     }
 }
@@ -1366,8 +1373,8 @@ TMfreeNode (TM_ARGDECL  node_t* n)
 void
 rbtree_free (rbtree_t* r)
 {
-    freeNode(r->root);
-    free(r);
+    freeNode(LDF_P(r, root));
+    pmemobj_tx_free(pmemobj_oid(r));
 }
 
 
@@ -1378,7 +1385,7 @@ rbtree_free (rbtree_t* r)
 void
 TMrbtree_free (TM_ARGDECL  rbtree_t* r)
 {
-    TMfreeNode(TM_ARG  r->root);
+    TMfreeNode(TM_ARG  LDF_P(r, root));
     TM_FREE(r);
 }
 
@@ -1390,7 +1397,7 @@ TMrbtree_free (TM_ARGDECL  rbtree_t* r)
 static node_t*
 getNode ()
 {
-    node_t* n = (node_t*)malloc(sizeof(*n));
+    node_t* n = (node_t*)pmemobj_direct(pmemobj_tx_zalloc(sizeof(node_t), TYPE_NODE));
     return n;
 }
 
@@ -1402,7 +1409,7 @@ getNode ()
 static node_t*
 TMgetNode (TM_ARGDECL_ALONE)
 {
-    node_t* n = (node_t*)TM_MALLOC(sizeof(*n));
+    node_t* n = (node_t*)TM_MALLOC(sizeof(*n), TYPE_NODE);
     return n;
 }
 
@@ -1542,7 +1549,7 @@ void*
 TMrbtree_get (TM_ARGDECL  rbtree_t* r, void* key) {
     node_t* n = TX_LOOKUP(r, key);
     if (n != NULL) {
-        void* val = TX_LDF(n, v);
+        void* val = (void *)TX_LDF(n, v);
         return val;
     }
     return NULL;
