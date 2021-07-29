@@ -331,7 +331,7 @@ stm_wt_write(stm_tx_t *tx, volatile stm_word_t *addr, stm_word_t value, stm_word
           if (mask != ~(stm_word_t)0)
             value = (ATOMIC_LOAD(page_use(tx, (uint64_t)addr)) & ~mask) | (value & mask); // page map
           ATOMIC_STORE(page_use(tx, (uint64_t)addr), value);
-          v_log_insert_exist(tx, (uint64_t)addr, value, ((uint64_t)w - (uint64_t)tx->w_set.entries) >> 3); // insert exist v_log
+          v_log_insert_exist(tx, (uint64_t)addr, value, ((uint64_t)prev - (uint64_t)tx->w_set.entries) / sizeof(w_entry_t)); // insert exist v_log
           return w;
         }
         if (prev->next == NULL) {

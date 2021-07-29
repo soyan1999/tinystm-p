@@ -36,6 +36,8 @@
 
 #define RO                              1
 #define RW                              0
+#define IDEBUG
+#define CONTAIN                         d
 
 #if defined(TM_GCC) 
 # include "../../abi/gcc/tm_macros.h"
@@ -258,7 +260,7 @@ static intset_t *set_new()
   // max = new_node(VAL_MAX, NULL, 0);
   // min = new_node(VAL_MIN, max, 0);
   // set->head = min;
-  page_map_init();
+  // page_map_init();
   return set;
 }
 
@@ -309,13 +311,13 @@ static int set_contains(intset_t *set, val_t val, thread_data_t *td)
 # endif
 
   if (td == NULL) {
-    // prev = set->head;
-    // next = prev->next;
-    // while (next->val < val) {
-    //   prev = next;
-    //   next = prev->next;
-    // }
-    // result = (next->val == val);
+    prev = (node_t *)nv_to_ptr(set->head);
+    next = (node_t *)nv_to_ptr(prev->next);
+    while (next->val < val) {
+      prev = next;
+      next = (node_t *)nv_to_ptr(prev->next);
+    }
+    result = (next->val == val);
   } else if (td->unit_tx == 0) {
     TM_START(0, RO);
     prev = (node_t *)nv_to_ptr(TM_LOAD(&set->head));
@@ -593,7 +595,7 @@ static intset_t *set_new()
     root->obj_root[0] = ptr_to_nv(set);
   }TX_END
 
-  page_map_init();
+  // page_map_init();
   return set;
 }
 
@@ -1289,7 +1291,7 @@ static void barrier_cross(barrier_t *b)
 
 static void *test(void *data)
 {
-  int op, val, last = -1;
+  int op, val, last = -1, success = 0;
   thread_data_t *d = (thread_data_t *)data;
 
   /* Create transaction */
@@ -1309,11 +1311,19 @@ static void *test(void *data)
             d->diff++;
             last = val;
           }
+          #ifdef IDEBUG
+          if (!set_contains(d->set, val, CONTAIN))
+            printf("add error!\n");
+          #endif
           d->nb_add++;
         } else {
           /* Remove last value */
           if (set_remove(d->set, last, d))
             d->diff--;
+          #ifdef IDEBUG
+          if (set_contains(d->set, last, CONTAIN))
+            printf("remove error!\n");
+          #endif
           d->nb_remove++;
           last = -1;
         }
@@ -1324,19 +1334,31 @@ static void *test(void *data)
           /* Add random value */
           if (set_add(d->set, val, d))
             d->diff++;
+          #ifdef IDEBUG
+          if (!set_contains(d->set, val, CONTAIN))
+            printf("add error!\n");
+          #endif
           d->nb_add++;
         } else {
           /* Remove random value */
           if (set_remove(d->set, val, d))
             d->diff--;
+          #ifdef IDEBUG
+          if (set_contains(d->set, val, CONTAIN))
+            printf("remove error!\n");
+          #endif
           d->nb_remove++;
         }
       }
     } else {
       /* Look for random value */
       val = rand_range(d->range, d->seed) + 1;
-      if (set_contains(d->set, val, d))
+      if ((success = set_contains(d->set, val, d)) == 1)
         d->nb_found++;
+      #ifdef IDEBUG
+      if (success != set_contains(d->set, val, CONTAIN))
+        printf("constains error!\n");
+      #endif
       d->nb_contains++;
     }
   }
@@ -1600,6 +1622,7 @@ int main(int argc, char **argv)
     if (set_add(set, val, 0))
       i++;
   }
+  page_map_init();
   size = set_size(set);
   printf("Set size     : %d\n", size);
 
