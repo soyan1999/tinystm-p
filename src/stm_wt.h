@@ -332,6 +332,7 @@ stm_wt_write(stm_tx_t *tx, volatile stm_word_t *addr, stm_word_t value, stm_word
             value = (ATOMIC_LOAD(page_use(tx, (uint64_t)addr)) & ~mask) | (value & mask); // page map
           ATOMIC_STORE(page_use(tx, (uint64_t)addr), value);
           v_log_insert_exist(tx, (uint64_t)addr, value, ((uint64_t)prev - (uint64_t)tx->w_set.entries) / sizeof(w_entry_t)); // insert exist v_log
+          // v_log_insert(tx, (uint64_t)addr, value); // insert v_log
           return w;
         }
         if (prev->next == NULL) {
@@ -508,7 +509,7 @@ stm_wt_WaW(stm_tx_t *tx, volatile stm_word_t *addr, stm_word_t value, stm_word_t
   }
   ATOMIC_STORE(page_use(tx, (uint64_t)addr), value); // page map
 #ifndef NDEBUG
-  v_log_insert_exist(tx, (uint64_t)addr, value, ((uint64_t)w - (uint64_t)tx->w_set.entries) >> 3); // insert exist v_log
+  v_log_insert_exist(tx, (uint64_t)addr, value, ((uint64_t)w - (uint64_t)tx->w_set.entries) / sizeof(w_entry_t)); // insert exist v_log
 #endif /* ! NDEBUG */
 }
 
@@ -579,7 +580,7 @@ stm_wt_commit(stm_tx_t *tx)
     nv_log_reproduce();
   }
   nv_log_reproduce();
-  v_log_reset(tx); // reset v_log
+  // v_log_reset(tx); // reset v_log
 
   /* Make sure that all lock releases become visible */
   /* TODO: is ATOMIC_MB_WRITE required? */

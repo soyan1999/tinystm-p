@@ -1368,7 +1368,7 @@ int_stm_start(stm_tx_t *tx, stm_tx_attr_t attr)
 
   /* Initialize transaction descriptor */
   int_stm_prepare(tx);
-
+  v_log_reset(tx); // reset v_log
   /* Callbacks */
   if (likely(_tinystm.nb_start_cb != 0)) {
     unsigned int cb;

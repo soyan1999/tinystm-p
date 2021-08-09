@@ -249,13 +249,14 @@ int nv_log_record(stm_tx_t *tx, uint64_t commit_timestamp) {
     
     // insert main logs
     for (int record_num = 0; record_num < tx->addition.v_log_head->num; record_num++) {
+        if (record_num != 0 && record_num % V_LOG_LENGTH == 0) v_log = v_log->next;
         result = nv_log_insert((uint64_t *)(&(v_log->v_logs[record_num % V_LOG_LENGTH])));
         if (result != 0) {
             _tinystm.addition.nv_log->write_offset = write_offset;
             _tinystm.addition.nv_log->write_block = write_block;
             return result;
         }
-        if (record_num != 0 && record_num % V_LOG_LENGTH == 0) v_log = v_log->next;
+        // if (record_num != 0 && record_num % V_LOG_LENGTH == 0) v_log = v_log->next;
     }
 
     // insert end block

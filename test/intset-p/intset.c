@@ -37,7 +37,7 @@
 #define RO                              1
 #define RW                              0
 #define IDEBUG
-#define CONTAIN                         d
+#define CONTAIN                         NULL
 
 #if defined(TM_GCC) 
 # include "../../abi/gcc/tm_macros.h"
@@ -1313,7 +1313,7 @@ static void *test(void *data)
           }
           #ifdef IDEBUG
           if (!set_contains(d->set, val, CONTAIN))
-            printf("add error!\n");
+            printf("add %d error!\n", val);
           #endif
           d->nb_add++;
         } else {
@@ -1322,7 +1322,7 @@ static void *test(void *data)
             d->diff--;
           #ifdef IDEBUG
           if (set_contains(d->set, last, CONTAIN))
-            printf("remove error!\n");
+            printf("remove %d error!\n", last);
           #endif
           d->nb_remove++;
           last = -1;
@@ -1357,7 +1357,7 @@ static void *test(void *data)
         d->nb_found++;
       #ifdef IDEBUG
       if (success != set_contains(d->set, val, CONTAIN))
-        printf("constains error!\n");
+        printf("constains %d error!\n", val);
       #endif
       d->nb_contains++;
     }
