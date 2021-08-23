@@ -320,18 +320,20 @@ typedef struct cb_entry {               /* Callback entry */
 } cb_entry_t;
 
 typedef struct nv_log nv_log_t;
-typedef struct v_log_head v_log_head_t;
+typedef struct v_log_block v_log_block_t;
+// typedef struct v_log_pool v_log_pool_t;
 
 typedef struct global_addition {
   PMEMobjpool *pool;
   struct root *root;
   uint64_t base;
   nv_log_t *nv_log;
+  // v_log_pool_t *v_log_pool;
 } global_addition_t;
 
 typedef struct tx_addition {
   uint64_t thread_nb;                   // thread number of all
-  v_log_head_t *v_log_head;
+  v_log_block_t *v_log_block;
 } tx_addition_t;
 
 typedef struct stm_tx {                 /* Transaction descriptor */

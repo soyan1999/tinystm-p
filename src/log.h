@@ -3,8 +3,9 @@
 
 # include "stm_internal.h"
 # define V_LOG_LENGTH 15
+// # define V_LOG_NUM 1024
 
-# define NV_LOG_NUM 63
+# define NV_LOG_LENGTH 63
 # define TYPE_NV_LOG_BLOCK 1
 
 # define NV_LOG_BLOCK_NUM 1024
@@ -42,7 +43,7 @@ typedef struct nv_log_entry {
 struct nv_log_block {
     nv_ptr next;
     uint64_t reserved;
-    nv_log_entry_t logs[NV_LOG_NUM];
+    nv_log_entry_t logs[NV_LOG_LENGTH];
 };
 
 
@@ -65,11 +66,17 @@ typedef struct v_log_entry {
     uint64_t data;
 } v_log_entry_t;
 
-struct v_log_head {
+struct v_log_block {
     uint64_t num;                       // only vaild in first entry
-    struct v_log_head *next;
+    struct v_log_block *next;
     v_log_entry_t v_logs[V_LOG_LENGTH];
 };
+
+// typedef struct v_log_pool {
+//     uint64_t num;
+//     struct v_log_block *first;
+//     struct v_log_block *last;
+// } v_log_pool_t;
 
 
 typedef struct nv_log_begin {
@@ -82,6 +89,8 @@ typedef struct nv_log_end {
     uint64_t time_commit;
 } nv_log_end_t;
 
+
+// void v_log_pool_init(); // alloc v_log_blocks to pool
 
 void v_log_insert(stm_tx_t *tx, uint64_t nv_addr, uint64_t data); // use when write data to a new addr
 
@@ -101,26 +110,43 @@ void nv_log_save(); // save all log to nv_heap
 
 
 static void v_log_expand(stm_tx_t *tx) {
-    v_log_head_t *node = tx->addition.v_log_head, *prev = NULL;
+    v_log_block_t *node = tx->addition.v_log_block, *prev = NULL;
 
     while (node != NULL) {
         prev = node;
         node = node->next;
     }
 
-    node = (v_log_head_t *)malloc(sizeof(v_log_head_t));
+    node = (v_log_block_t *)malloc(sizeof(v_log_block_t));
     node->num = 0;
     node->next = NULL;
     if (prev != NULL) prev->next = node;
-    else tx->addition.v_log_head = node;
+    else tx->addition.v_log_block = node;
 }
+
+// void v_log_pool_init() {
+//     v_log_pool_t *v_log_pool = (v_log_pool_t *)malloc(sizeof(v_log_pool_t));
+//     v_log_pool->first = (v_log_block_t *)malloc(sizeof(v_log_block_t));
+//     v_log_block_t *node = v_log_pool->first;
+
+//     for (uint64_t i = 1; i < V_LOG_NUM; i ++) {
+//         node->num = 0;
+//         node->next = (v_log_block_t *)malloc(sizeof(v_log_block_t));
+//         node = node->next;
+//     }
+//     node->num = 0;
+//     node->next = NULL;
+//     v_log_pool->last = node;
+
+//     _tinystm.addition.v_log_pool = v_log_pool;
+// }
 
 void v_log_init(stm_tx_t *tx) {
     v_log_expand(tx);
 }
 
 void v_log_insert_exist(stm_tx_t *tx, uint64_t nv_addr, uint64_t data, uint64_t nb) {
-    v_log_head_t *node = tx->addition.v_log_head;
+    v_log_block_t *node = tx->addition.v_log_block;
 
     while (nb > V_LOG_LENGTH - 1) {
         nb -= V_LOG_LENGTH;
@@ -132,7 +158,7 @@ void v_log_insert_exist(stm_tx_t *tx, uint64_t nv_addr, uint64_t data, uint64_t 
 }
 
 void v_log_insert(stm_tx_t *tx, uint64_t nv_addr, uint64_t data) {
-    v_log_head_t *node = tx->addition.v_log_head;
+    v_log_block_t *node = tx->addition.v_log_block;
     unsigned int nb = node->num;
 
     while (nb > V_LOG_LENGTH - 1) {
@@ -143,11 +169,11 @@ void v_log_insert(stm_tx_t *tx, uint64_t nv_addr, uint64_t data) {
 
     node->v_logs[nb].nv_addr = nv_addr;
     node->v_logs[nb].data = data;
-    tx->addition.v_log_head->num ++;
+    tx->addition.v_log_block->num ++;
 }
 
 void v_log_reset(stm_tx_t *tx) {
-    tx->addition.v_log_head->num = 0;
+    tx->addition.v_log_block->num = 0;
 }
 
 // persist log operation
@@ -182,28 +208,37 @@ static void nv_log_get(v_log_entry_t *entry) {
     entry->nv_addr = temp->logs[_tinystm.addition.nv_log->read_offset].nv_addr;
     entry->data = temp->logs[_tinystm.addition.nv_log->read_offset++].data;
 
-    if (_tinystm.addition.nv_log->read_offset == NV_LOG_NUM) {
+    if (_tinystm.addition.nv_log->read_offset == NV_LOG_LENGTH) {
         _tinystm.addition.nv_log->read_block = temp->next;
         _tinystm.addition.nv_log->read_offset = 0;
     }
 }
 
-static int nv_log_insert(uint64_t *entry) {
+static int nv_log_insert(uint64_t *entry, int state) {
     struct nv_log_block *temp;
+    static uint64_t begin_off;
+    if (state == 0) 
+        begin_off = _tinystm.addition.nv_log->write_offset;
+
     temp = (struct nv_log_block *)(_tinystm.addition.nv_log->write_block + _tinystm.addition.base);
 
     temp->logs[_tinystm.addition.nv_log->write_offset].nv_addr = *entry;
     temp->logs[_tinystm.addition.nv_log->write_offset].data = *(entry + 1);
-    pmemobj_flush(_tinystm.addition.pool, &temp->logs[_tinystm.addition.nv_log->write_offset], 2 * sizeof(uint64_t)); // flush
+    // pmemobj_flush(_tinystm.addition.pool, &temp->logs[_tinystm.addition.nv_log->write_offset], 2 * sizeof(uint64_t)); // flush
     _tinystm.addition.nv_log->write_offset ++;
 
-    if (_tinystm.addition.nv_log->write_offset == NV_LOG_NUM) {
+    if (_tinystm.addition.nv_log->write_offset == NV_LOG_LENGTH) {
         if (temp->next == _tinystm.addition.nv_log->read_block) return -1;
+        pmemobj_flush(_tinystm.addition.pool, &temp->logs[begin_off], 2 * (NV_LOG_LENGTH - begin_off) * sizeof(uint64_t)); // flush
         //if (temp->next == _tinystm.addition.nv_log->read_block) return -1;
         // pmemobj_flush(_tinystm.addition.pool, (void *)(_tinystm.addition.nv_log->write_block), 2 *sizeof(uint64_t)); // flush
         _tinystm.addition.nv_log->write_block = temp->next;
         _tinystm.addition.nv_log->write_offset = 0;
+        begin_off = 0;
         return 0;
+    }
+    else if (state == 2) {
+        pmemobj_flush(_tinystm.addition.pool, &temp->logs[begin_off], 2 * (_tinystm.addition.nv_log->write_offset - begin_off) * sizeof(uint64_t));
     }
     return 0;
 }
@@ -231,16 +266,16 @@ void nv_log_init() {
 }
 
 int nv_log_record(stm_tx_t *tx, uint64_t commit_timestamp) {
-    nv_log_begin_t begin_block = {.begin_flag = BEGIN_SIG, .length = tx->addition.v_log_head->num};
+    nv_log_begin_t begin_block = {.begin_flag = BEGIN_SIG, .length = tx->addition.v_log_block->num};
     nv_log_end_t end_block = {.end_flag = END_SIG, .time_commit = commit_timestamp + _tinystm.addition.nv_log->last_timestamp};
     // backup of write ptr
     uint64_t write_offset = _tinystm.addition.nv_log->write_offset;
     uint64_t write_block = _tinystm.addition.nv_log->write_block;
-    v_log_head_t  *v_log = tx->addition.v_log_head;
+    v_log_block_t  *v_log = tx->addition.v_log_block;
     int result = 0;
     
     // insert begin block
-    result = nv_log_insert((uint64_t *)&begin_block);
+    result = nv_log_insert((uint64_t *)&begin_block, 0);
     if (result != 0) {
         _tinystm.addition.nv_log->write_offset = write_offset;
         _tinystm.addition.nv_log->write_block = write_block;
@@ -248,9 +283,9 @@ int nv_log_record(stm_tx_t *tx, uint64_t commit_timestamp) {
     }
     
     // insert main logs
-    for (int record_num = 0; record_num < tx->addition.v_log_head->num; record_num++) {
+    for (int record_num = 0; record_num < tx->addition.v_log_block->num; record_num++) {
         if (record_num != 0 && record_num % V_LOG_LENGTH == 0) v_log = v_log->next;
-        result = nv_log_insert((uint64_t *)(&(v_log->v_logs[record_num % V_LOG_LENGTH])));
+        result = nv_log_insert((uint64_t *)(&(v_log->v_logs[record_num % V_LOG_LENGTH])), 1);
         if (result != 0) {
             _tinystm.addition.nv_log->write_offset = write_offset;
             _tinystm.addition.nv_log->write_block = write_block;
@@ -260,7 +295,7 @@ int nv_log_record(stm_tx_t *tx, uint64_t commit_timestamp) {
     }
 
     // insert end block
-    result = nv_log_insert((uint64_t *)&end_block);
+    result = nv_log_insert((uint64_t *)&end_block, 2);
     if (result != 0) {
         _tinystm.addition.nv_log->write_offset = write_offset;
         _tinystm.addition.nv_log->write_block = write_block;
@@ -279,7 +314,7 @@ int nv_log_record(stm_tx_t *tx, uint64_t commit_timestamp) {
     pmemobj_set_value(_tinystm.addition.pool, &act[2], &_tinystm.addition.root->persist_timestamp, commit_timestamp + _tinystm.addition.nv_log->last_timestamp);
     pmemobj_publish(_tinystm.addition.pool, act, 3);
 
-    //tx->addition.v_log_head->num = 0; // delete v_log
+    //tx->addition.v_log_block->num = 0; // delete v_log
     return 0;
 }
 

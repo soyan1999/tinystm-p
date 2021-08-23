@@ -36,7 +36,7 @@
 
 #define RO                              1
 #define RW                              0
-#define IDEBUG
+// #define IDEBUG
 #define CONTAIN                         NULL
 
 #if defined(TM_GCC) 
@@ -471,6 +471,20 @@ static int set_remove(intset_t *set, val_t val, thread_data_t *td)
 # endif
 
   if (td == NULL) {
+    prev = (node_t *)nv_to_ptr(set->head);
+    next = (node_t *)nv_to_ptr(prev->next);
+    while (next->val < val) {
+      prev = next;
+      next = (node_t *)nv_to_ptr(prev->next);
+    }
+    result = (next->val == val);
+    if (result) {
+      TX_BEGIN(pool) {
+        pmemobj_tx_add_range_direct(&prev->next, sizeof(nv_ptr));
+        prev->next = next->next;
+        pmemobj_tx_free(pmemobj_oid(next));
+      }TX_END
+    }
     // prev = set->head;
     // next = prev->next;
     // while (next->val < val) {
@@ -584,7 +598,7 @@ static long compare(const void *a, const void *b)
 static intset_t *set_new()
 {
   intset_t *set;
-  pool = pool_init("intset-ll.pool");
+  pool = pool_init("intset-rb.pool");
   PMEMoid Root = pmemobj_root(pool, sizeof(struct root));
   root = pmemobj_direct(Root);
   if (root->obj_root[0] != 0) return (intset_t *)nv_to_ptr(root->obj_root[0]);
