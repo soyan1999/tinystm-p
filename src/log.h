@@ -227,6 +227,7 @@ void v_log_table_clean() {
 int v_log_table_persist(uint64_t commit_timestamp) {
     nv_log_begin_t begin_block = {.begin_flag = BEGIN_SIG, .length = _tinystm.addition.v_log_count};
     nv_log_end_t end_block = {.end_flag = END_SIG, .time_commit = commit_timestamp + _tinystm.addition.nv_log->last_timestamp};
+    v_log_entry_t v_log_entry;
     // backup of write ptr
     uint64_t write_offset = _tinystm.addition.nv_log->write_offset;
     uint64_t write_block = _tinystm.addition.nv_log->write_block;
@@ -249,22 +250,19 @@ int v_log_table_persist(uint64_t commit_timestamp) {
         prev = _tinystm.addition.v_log_table[index];
         next = prev->next;
         while (1) {
-            free(prev);
+            v_log_entry.nv_addr = prev->addr, 
+            v_log_entry.data = prev->value;
+            result = nv_log_insert((uint64_t *)(&v_log_entry), 1);
+            if (result != 0) {
+                _tinystm.addition.nv_log->write_offset = write_offset;
+                _tinystm.addition.nv_log->write_block = write_block;
+                return result;
+            }
+
             if (next == NULL) break;
             prev = next;
             next = next->next;
         }
-    }
-
-    for (int record_num = 0; record_num < tx->addition.v_log_block->num; record_num++) {
-        if (record_num != 0 && record_num % V_LOG_LENGTH == 0) v_log = v_log->next;
-        result = nv_log_insert((uint64_t *)(&(v_log->v_logs[record_num % V_LOG_LENGTH])), 1);
-        if (result != 0) {
-            _tinystm.addition.nv_log->write_offset = write_offset;
-            _tinystm.addition.nv_log->write_block = write_block;
-            return result;
-        }
-        // if (record_num != 0 && record_num % V_LOG_LENGTH == 0) v_log = v_log->next;
     }
 
     // insert end block
