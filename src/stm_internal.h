@@ -322,13 +322,19 @@ typedef struct cb_entry {               /* Callback entry */
 typedef struct nv_log nv_log_t;
 typedef struct v_log_block v_log_block_t;
 // typedef struct v_log_pool v_log_pool_t;
+typedef struct v_log_table_entry v_log_table_entry_t;
 
 typedef struct global_addition {
   PMEMobjpool *pool;
   struct root *root;
   uint64_t base;
   nv_log_t *nv_log;
+  uint64_t v_log_transaction_count;
   // v_log_pool_t *v_log_pool;
+  v_log_table_entry_t **v_log_table;
+  uint64_t *v_log_modified;
+  uint64_t v_log_modified_count;
+  uint64_t v_log_count;
 } global_addition_t;
 
 typedef struct tx_addition {
@@ -431,8 +437,9 @@ typedef struct global_ {
 
 extern global_t _tinystm;
 
-#include "log.h"
+// #include "log.h"
 #include "page.h"
+#include "log.h"
 
 #if CM == CM_MODULAR
 # define KILL_SELF                      0x00
