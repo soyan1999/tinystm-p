@@ -4,8 +4,10 @@
 # include "stm_internal.h"
 # define V_LOG_LENGTH 15
 # define V_LOG_TABLE_LOG_LENGTH 20
+# define NVM_LENGTH 30
 # define V_LOG_TABLE_LENGTH (1 << V_LOG_TABLE_LOG_LENGTH)
-# define V_LOG_ADDR_SHIFT (NVM_LENGTH - V_LOG_TABLE_LOG_LENGTH)
+# define V_LOG_ADDR_SHIFT (NVM_LENGTH - V_LOG_TABLE_LOG_LENGTH - 3)
+# define MAX_UNPERSIST_TRANSACTION 100
 
 # define NV_LOG_LENGTH 63
 # define TYPE_NV_LOG_BLOCK 1
@@ -117,6 +119,10 @@ void v_log_table_clean(); // insert v_log
 
 int v_log_table_persist(uint64_t commit_timestamp); // persist v_log in hash_table
 
+int log_before_commit(stm_tx_t *tx, uint64_t commit_timestamp); // add hashtable or persist log
+
+static int nv_log_insert(uint64_t *entry, int state);
+
 void nv_log_init(); // use when init stm
 
 int nv_log_record(stm_tx_t *tx, uint64_t commit_timestamp); // use when commit
@@ -142,19 +148,20 @@ static void v_log_expand(stm_tx_t *tx) {
 }
 
 void v_log_table_init() {
-    v_log_table_entry_t **v_log_table = (v_log_table_entry_t **)malloc(V_LOG_TABLE_LENGTH * sizeof(v_log_table_entry_t *));
+    v_log_table_entry_t **v_log_table = (v_log_table_entry_t **)calloc(V_LOG_TABLE_LENGTH, sizeof(v_log_table_entry_t *));
     uint64_t *v_log_modified = (uint64_t *)calloc(V_LOG_TABLE_LENGTH, sizeof(uint64_t));
     _tinystm.addition.v_log_table = v_log_table;
     _tinystm.addition.v_log_modified = v_log_modified;
     _tinystm.addition.v_log_modified_count = 0;
+    _tinystm.addition.v_log_count = 0;
     _tinystm.addition.v_log_transaction_count = 0;
 }
 
 void v_log_table_insert(v_log_entry_t *entry) {
     uint64_t nv_addr = entry->nv_addr, data = entry->data;
-    uint64_t index = nv_addr >> V_LOG_ADDR_SHIFT;
+    uint64_t index = (nv_addr >> 3) & (~(~0 << V_LOG_ADDR_SHIFT)); //low 10~3 bit as index
     v_log_table_entry_t **v_log_table = _tinystm.addition.v_log_table;
-    v_log_table_entry_t **v_log_modified = _tinystm.addition.v_log_modified;
+    uint64_t *v_log_modified = _tinystm.addition.v_log_modified;
     v_log_table_entry_t *v_log_table_entry;
 
     if (v_log_table[index] == NULL || v_log_table[index]->addr > nv_addr) {
@@ -199,7 +206,7 @@ void v_log_table_move(stm_tx_t *tx) {
     
     for (int record_num = 0; record_num < tx->addition.v_log_block->num; record_num++) {
         if (record_num != 0 && record_num % V_LOG_LENGTH == 0) v_log = v_log->next;
-        v_log_table_insert((uint64_t *)(&(v_log->v_logs[record_num % V_LOG_LENGTH])));
+        v_log_table_insert(&(v_log->v_logs[record_num % V_LOG_LENGTH]));
     }
 }
 
@@ -217,9 +224,10 @@ void v_log_table_clean() {
             prev = next;
             next = next->next;
         }
+        _tinystm.addition.v_log_table[index] = NULL;
     }
 
-    _tinystm.addition.v_log_transaction_count = 0;
+    _tinystm.addition.v_log_count = 0;
     _tinystm.addition.v_log_modified_count = 0;
     _tinystm.addition.v_log_transaction_count = 0;
 }
@@ -286,6 +294,20 @@ int v_log_table_persist(uint64_t commit_timestamp) {
     pmemobj_publish(_tinystm.addition.pool, act, 3);
 
     //tx->addition.v_log_block->num = 0; // delete v_log
+    return 0;
+}
+
+int log_before_commit(stm_tx_t *tx, uint64_t commit_timestamp) {
+    v_log_table_move(tx);
+    _tinystm.addition.v_log_transaction_count ++;
+    if (_tinystm.addition.v_log_transaction_count >= MAX_UNPERSIST_TRANSACTION || _tinystm.addition.v_log_count >= NV_LOG_LENGTH) {
+        while(v_log_table_persist(commit_timestamp)) {
+            nv_log_reproduce();
+        }
+        v_log_table_clean();
+        if (_tinystm.addition.v_log_count != 0) nv_log_reproduce();
+        return 1;
+    }
     return 0;
 }
 
@@ -537,6 +559,7 @@ PMEMobjpool *pmem_init(char *pool_path) {
         _tinystm.addition.root = pmemobj_direct(Root);
         _tinystm.addition.base = (uint64_t)_tinystm.addition.root - Root.off;
         _tinystm.addition.nv_log = calloc(1, sizeof(nv_log_t));
+        v_log_table_init();
         nv_log_init();
     }
     else {
@@ -547,6 +570,7 @@ PMEMobjpool *pmem_init(char *pool_path) {
         _tinystm.addition.root = pmemobj_direct(Root);
         _tinystm.addition.base = (uint64_t)_tinystm.addition.root - Root.off;
         _tinystm.addition.nv_log = calloc(1, sizeof(nv_log_t));
+        v_log_table_init();
         nv_log_init();
     }
     return _tinystm.addition.pool;

@@ -576,10 +576,12 @@ stm_wt_commit(stm_tx_t *tx)
     }
   }
   // add for persist
-  while (nv_log_record(tx, t) < 0) {
-    nv_log_reproduce();
-  }
-  nv_log_reproduce();
+  // while (nv_log_record(tx, t) < 0) {
+  //   nv_log_reproduce();
+  // }
+  // nv_log_reproduce();
+  if (!tx->attr.read_only) log_before_commit(tx, t);
+
   // v_log_reset(tx); // reset v_log
 
   /* Make sure that all lock releases become visible */

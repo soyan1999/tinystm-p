@@ -437,9 +437,9 @@ typedef struct global_ {
 
 extern global_t _tinystm;
 
-// #include "log.h"
-#include "page.h"
 #include "log.h"
+#include "page.h"
+// #include "log.h"
 
 #if CM == CM_MODULAR
 # define KILL_SELF                      0x00
