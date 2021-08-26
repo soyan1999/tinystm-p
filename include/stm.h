@@ -279,6 +279,8 @@ PMEMobjpool *pool_init(char *pool_path) _CALLCONV;
 
 void page_map_init() _CALLCONV;
 
+void log_flush() _CALLCONV;
+
 /**
  * Initialize the STM library.  This function must be called once, from
  * the main thread, before any access to the other functions of the

@@ -1762,6 +1762,7 @@ int main(int argc, char **argv)
     updates += (data[i].nb_add + data[i].nb_remove);
     size += data[i].diff;
   }
+  log_flush();
   printf("Set size      : %d (expected: %d)\n", set_size(set), size);
   ret = (set_size(set) != size);
   printf("Duration      : %d (ms)\n", duration);

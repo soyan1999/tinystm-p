@@ -263,6 +263,10 @@ _CALLCONV void page_map_init() {
   page_init();
 }
 
+_CALLCONV void log_flush() {
+  nv_log_flush();
+}
+
 /*
  * Called once (from main) to initialize STM infrastructure.
  */

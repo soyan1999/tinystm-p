@@ -117,7 +117,7 @@ void v_log_table_move(); // move v_log to hash_table
 
 void v_log_table_clean(); // insert v_log
 
-int v_log_table_persist(uint64_t commit_timestamp); // persist v_log in hash_table
+int v_log_table_persist(); // persist v_log in hash_table
 
 int log_before_commit(stm_tx_t *tx, uint64_t commit_timestamp); // add hashtable or persist log
 
@@ -130,6 +130,8 @@ int nv_log_record(stm_tx_t *tx, uint64_t commit_timestamp); // use when commit
 int nv_log_reproduce(); // use after commit
 
 void nv_log_save(); // save all log to nv_heap
+
+void nv_log_flush(); // flush v_log
 
 
 static void v_log_expand(stm_tx_t *tx) {
@@ -155,6 +157,7 @@ void v_log_table_init() {
     _tinystm.addition.v_log_modified_count = 0;
     _tinystm.addition.v_log_count = 0;
     _tinystm.addition.v_log_transaction_count = 0;
+    _tinystm.addition.max_timestamp = 0;
 }
 
 void v_log_table_insert(v_log_entry_t *entry) {
@@ -232,7 +235,8 @@ void v_log_table_clean() {
     _tinystm.addition.v_log_transaction_count = 0;
 }
 
-int v_log_table_persist(uint64_t commit_timestamp) {
+int v_log_table_persist() {
+    uint64_t commit_timestamp = _tinystm.addition.max_timestamp;
     nv_log_begin_t begin_block = {.begin_flag = BEGIN_SIG, .length = _tinystm.addition.v_log_count};
     nv_log_end_t end_block = {.end_flag = END_SIG, .time_commit = commit_timestamp + _tinystm.addition.nv_log->last_timestamp};
     v_log_entry_t v_log_entry;
@@ -299,9 +303,10 @@ int v_log_table_persist(uint64_t commit_timestamp) {
 
 int log_before_commit(stm_tx_t *tx, uint64_t commit_timestamp) {
     v_log_table_move(tx);
+    _tinystm.addition.max_timestamp = commit_timestamp;
     _tinystm.addition.v_log_transaction_count ++;
     if (_tinystm.addition.v_log_transaction_count >= MAX_UNPERSIST_TRANSACTION || _tinystm.addition.v_log_count >= NV_LOG_LENGTH) {
-        while(v_log_table_persist(commit_timestamp)) {
+        while(v_log_table_persist()) {
             nv_log_reproduce();
         }
         v_log_table_clean();
@@ -543,10 +548,17 @@ int nv_log_reproduce() {
 }
 
 void nv_log_save() {
-    nv_log_recovery();
+    nv_log_flush();
     pmemobj_close(_tinystm.addition.pool);
 }
 
+void nv_log_flush() {
+    while(v_log_table_persist()) {
+        nv_log_reproduce();
+    }
+    v_log_table_clean();
+    nv_log_recovery();
+}
 
 PMEMobjpool *pmem_init(char *pool_path) {
     FILE *r = fopen(pool_path, "r");

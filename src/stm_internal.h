@@ -335,6 +335,7 @@ typedef struct global_addition {
   uint64_t *v_log_modified;
   uint64_t v_log_modified_count;
   uint64_t v_log_count;
+  uint64_t max_timestamp;
 } global_addition_t;
 
 typedef struct tx_addition {
