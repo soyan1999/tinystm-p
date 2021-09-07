@@ -34,6 +34,7 @@
 #include "utils.h"
 #include "atomic.h"
 #include "gc.h"
+#include "sys/time.h"
 
 
 
@@ -269,6 +270,12 @@ enum {                                  /* Transaction status */
 #endif /* MAX_SPECIFIC */
 
 
+#define V_LOG_COLLECT_MAX 2000
+#define GROUP_COLLECT_MAX 2000
+#define FLUSH_COLLECT_MAX 65
+#define DELAY_COLLECT_MAX 2000
+#define GROUP_COMMIT_MAX 1000
+
 typedef struct r_entry {                /* Read set entry */
   stm_word_t version;                   /* Version read */
   volatile stm_word_t *lock;            /* Pointer to lock (for fast access) */
@@ -323,17 +330,34 @@ typedef struct nv_log nv_log_t;
 typedef struct v_log_block v_log_block_t;
 // typedef struct v_log_pool v_log_pool_t;
 
+typedef struct global_measure {
+  uint64_t v_log_size_collect[V_LOG_COLLECT_MAX + 1];
+  uint64_t group_size_collect[GROUP_COLLECT_MAX + 1];
+  uint64_t group_commit_collect[GROUP_COMMIT_MAX + 1];
+  uint64_t flush_size_collect[FLUSH_COLLECT_MAX + 1];
+  uint64_t delay_time_collect[DELAY_COLLECT_MAX + 1];
+} global_measure_t;
+
+typedef struct tx_measure {
+  struct timeval start_time[GROUP_COLLECT_MAX];
+  uint64_t group_size;
+  // bool in_group;
+  uint64_t vlog_size;
+} tx_measure_t;
+
 typedef struct global_addition {
   PMEMobjpool *pool;
   struct root *root;
   uint64_t base;
   nv_log_t *nv_log;
   // v_log_pool_t *v_log_pool;
+  global_measure_t global_measure;
 } global_addition_t;
 
 typedef struct tx_addition {
   uint64_t thread_nb;                   // thread number of all
   v_log_block_t *v_log_block;
+  tx_measure_t tx_measure;
 } tx_addition_t;
 
 typedef struct stm_tx {                 /* Transaction descriptor */
