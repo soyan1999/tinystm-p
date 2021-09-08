@@ -341,6 +341,7 @@ stm_exit(void)
     return;
 
   nv_log_save(); // add for save all nv_log to nv_heap
+  result_output();
   tls_exit();
   stm_quiesce_exit();
 

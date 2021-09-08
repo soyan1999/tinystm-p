@@ -34,6 +34,7 @@
 #include "utils.h"
 #include "atomic.h"
 #include "gc.h"
+#include "sys/time.h"
 
 
 
@@ -269,6 +270,12 @@ enum {                                  /* Transaction status */
 #endif /* MAX_SPECIFIC */
 
 
+#define V_LOG_COLLECT_MAX 2000
+#define GROUP_COLLECT_MAX 2000
+#define FLUSH_COLLECT_MAX 65
+#define DELAY_COLLECT_MAX 2000
+#define GROUP_COMMIT_MAX 1000
+
 typedef struct r_entry {                /* Read set entry */
   stm_word_t version;                   /* Version read */
   volatile stm_word_t *lock;            /* Pointer to lock (for fast access) */
@@ -324,6 +331,21 @@ typedef struct v_log_block v_log_block_t;
 // typedef struct v_log_pool v_log_pool_t;
 typedef struct v_log_table_entry v_log_table_entry_t;
 
+typedef struct global_measure {
+  uint64_t v_log_size_collect[V_LOG_COLLECT_MAX + 1];
+  uint64_t group_size_collect[GROUP_COLLECT_MAX + 1];
+  uint64_t group_commit_collect[GROUP_COMMIT_MAX + 1];
+  uint64_t flush_size_collect[FLUSH_COLLECT_MAX + 1];
+  uint64_t delay_time_collect[DELAY_COLLECT_MAX + 1];
+} global_measure_t;
+
+typedef struct tx_measure {
+  struct timeval start_time[GROUP_COLLECT_MAX];
+  uint64_t group_size;
+  // bool in_group;
+  uint64_t vlog_size;
+} tx_measure_t;
+
 typedef struct global_addition {
   PMEMobjpool *pool;
   struct root *root;
@@ -336,11 +358,13 @@ typedef struct global_addition {
   uint64_t v_log_modified_count;
   uint64_t v_log_count;
   uint64_t max_timestamp;
+  global_measure_t global_measure;
 } global_addition_t;
 
 typedef struct tx_addition {
   uint64_t thread_nb;                   // thread number of all
   v_log_block_t *v_log_block;
+  tx_measure_t tx_measure;
 } tx_addition_t;
 
 typedef struct stm_tx {                 /* Transaction descriptor */
@@ -438,7 +462,23 @@ typedef struct global_ {
 
 extern global_t _tinystm;
 
+void init_measure();
+
+void tx_init_measure(stm_tx_t *tx);
+
+void collect_after_tx_start(stm_tx_t *tx); // collect start time
+
+void collect_before_log_combine(stm_tx_t *tx); // collect v_log size
+
+void collect_before_log_flush(uint64_t flush_size); // collect flush size
+
+void collect_before_commit(stm_tx_t *tx, int if_flush, uint64_t commit_size); //collect delay and group size and combined size
+
+void result_output(); //write result to file
+
+// #include "measure.h"
 #include "log.h"
+#include "measure.h"
 #include "page.h"
 // #include "log.h"
 
@@ -1255,6 +1295,7 @@ int_stm_init_thread(void)
 #endif /* USE_BLOOM_FILTER */
   stm_allocate_ws_entries(tx, 0);
   v_log_init(tx); // init v_log
+  tx_init_measure(tx);
   /* Nesting level */
   tx->nesting = 0;
   /* Transaction-specific data */
@@ -1379,6 +1420,7 @@ int_stm_start(stm_tx_t *tx, stm_tx_attr_t attr)
   /* Initialize transaction descriptor */
   int_stm_prepare(tx);
   v_log_reset(tx); // reset v_log
+  collect_after_tx_start(tx);
   /* Callbacks */
   if (likely(_tinystm.nb_start_cb != 0)) {
     unsigned int cb;

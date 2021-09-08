@@ -29,6 +29,10 @@ ifneq ($(SIZE),small)
   CPPFLAGS += -DSMALL_POOL
 endif
 
+ifneq ($(MEASURE),yes)
+  CPPFLAGS += -DENABLE_MEASURE
+endif
+
 # TODO Should be only for test binaries
 LDFLAGS += -L$(LIBDIR) -l$(TM)
 
