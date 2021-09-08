@@ -17,6 +17,7 @@ void collect_before_log_flush(uint64_t flush_size); // collect flush size
 
 void collect_before_commit(stm_tx_t *tx, int if_flush, uint64_t commit_size); //collect delay and group size and combined size
 
+void result_output(); //write result to file
 
 void init_measure() {
     #ifdef ENABLE_MEASURE
@@ -59,6 +60,8 @@ void collect_before_commit(stm_tx_t *tx, int if_flush, uint64_t commit_size) {
     uint64_t delay, group_size;
 
     if (if_flush) {
+        gettimeofday(&now_val, NULL);
+        
         for(uint64_t i = 0; i < tx->addition.tx_measure.group_size; i ++) {
             delay = 1000000 * (now_val.tv_sec - tx->addition.tx_measure.start_time[i].tv_sec) + \
              now_val.tv_usec - tx->addition.tx_measure.start_time[i].tv_usec;
@@ -76,6 +79,14 @@ void collect_before_commit(stm_tx_t *tx, int if_flush, uint64_t commit_size) {
 
         tx->addition.tx_measure.group_size = 0;
     }
+    #endif
+}
+
+void result_output() {
+    #ifdef ENABLE_MEASURE
+    FILE *f = fopen("./result.bin", "wb");
+    fwrite(&_tinystm.addition.global_measure, sizeof(global_measure_t), 1, f);
+    fclose(f);
     #endif
 }
 

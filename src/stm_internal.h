@@ -455,8 +455,23 @@ typedef struct global_ {
 
 extern global_t _tinystm;
 
-#include "measure.h"
+void init_measure();
+
+void tx_init_measure(stm_tx_t *tx);
+
+void collect_after_tx_start(stm_tx_t *tx); // collect start time
+
+void collect_before_log_combine(stm_tx_t *tx); // collect v_log size
+
+void collect_before_log_flush(uint64_t flush_size); // collect flush size
+
+void collect_before_commit(stm_tx_t *tx, int if_flush, uint64_t commit_size); //collect delay and group size and combined size
+
+void result_output(); //write result to file
+
+// #include "measure.h"
 #include "log.h"
+#include "measure.h"
 #include "page.h"
 
 #if CM == CM_MODULAR

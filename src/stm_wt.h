@@ -575,13 +575,15 @@ stm_wt_commit(stm_tx_t *tx)
       page_free(tx, (uint64_t)w->addr, t); // free page lock and add touch id
     }
   }
-  collect_before_log_combine(tx);
-  // add for persist
-  while (nv_log_record(tx, t) < 0) {
+  if(!tx->attr.read_only) {
+    collect_before_log_combine(tx);
+    // add for persist
+    while (nv_log_record(tx, t) < 0) {
+      nv_log_reproduce();
+    }
+    collect_before_commit(tx, 1, tx->addition.v_log_block->num);
     nv_log_reproduce();
   }
-  collect_before_commit(tx, 1, tx->addition.v_log_block->num);
-  nv_log_reproduce();
   // v_log_reset(tx); // reset v_log
 
   /* Make sure that all lock releases become visible */
