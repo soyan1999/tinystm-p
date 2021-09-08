@@ -580,8 +580,10 @@ stm_wt_commit(stm_tx_t *tx)
   //   nv_log_reproduce();
   // }
   // nv_log_reproduce();
-  if (!tx->attr.read_only) log_before_commit(tx, t);
-
+  if (!tx->attr.read_only) {
+    collect_before_log_combine(tx);
+    log_before_commit(tx, t);
+  }
   // v_log_reset(tx); // reset v_log
 
   /* Make sure that all lock releases become visible */

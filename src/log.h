@@ -309,6 +309,7 @@ int log_before_commit(stm_tx_t *tx, uint64_t commit_timestamp) {
         while(v_log_table_persist()) {
             nv_log_reproduce();
         }
+        collect_before_commit(tx, 1, _tinystm.addition.v_log_count);
         v_log_table_clean();
         if (_tinystm.addition.v_log_count != 0) nv_log_reproduce();
         return 1;

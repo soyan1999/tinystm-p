@@ -354,9 +354,9 @@ typedef struct global_addition {
   uint64_t v_log_transaction_count;
   // v_log_pool_t *v_log_pool;
   v_log_table_entry_t **v_log_table;
-  uint64_t *v_log_modified;
-  uint64_t v_log_modified_count;
-  uint64_t v_log_count;
+  uint64_t *v_log_modified; // modified hash bucket
+  uint64_t v_log_modified_count; // modified hash bucket num
+  uint64_t v_log_count; // modify v_log num
   uint64_t max_timestamp;
   global_measure_t global_measure;
 } global_addition_t;
