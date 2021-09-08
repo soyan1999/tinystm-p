@@ -4,7 +4,13 @@
 # include "stm_internal.h"
 # define V_LOG_LENGTH 15
 # define V_LOG_TABLE_LOG_LENGTH 20
-# define NVM_LENGTH 30
+# ifndef SMALL_POOL
+# define NVM_LENGTH     30
+# define DRAM_LENGTH    30
+# else
+# define NVM_LENGTH     27
+# define DRAM_LENGTH    27
+# endif
 # define V_LOG_TABLE_LENGTH (1 << V_LOG_TABLE_LOG_LENGTH)
 # define V_LOG_ADDR_SHIFT (NVM_LENGTH - V_LOG_TABLE_LOG_LENGTH - 3)
 # define MAX_UNPERSIST_TRANSACTION 100
