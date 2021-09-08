@@ -229,6 +229,7 @@ static int nv_log_insert(uint64_t *entry, int state) {
 
     if (_tinystm.addition.nv_log->write_offset == NV_LOG_LENGTH) {
         if (temp->next == _tinystm.addition.nv_log->read_block) return -1;
+        collect_before_log_flush(NV_LOG_LENGTH - begin_off);
         pmemobj_flush(_tinystm.addition.pool, &temp->logs[begin_off], 2 * (NV_LOG_LENGTH - begin_off) * sizeof(uint64_t)); // flush
         //if (temp->next == _tinystm.addition.nv_log->read_block) return -1;
         // pmemobj_flush(_tinystm.addition.pool, (void *)(_tinystm.addition.nv_log->write_block), 2 *sizeof(uint64_t)); // flush
@@ -384,6 +385,7 @@ PMEMobjpool *pmem_init(char *pool_path) {
         _tinystm.addition.nv_log = calloc(1, sizeof(nv_log_t));
         nv_log_init();
     }
+    init_measure();
     return _tinystm.addition.pool;
 }
 # endif /* _LOG_H_ */

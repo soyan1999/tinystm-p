@@ -9,13 +9,13 @@ void init_measure();
 
 void tx_init_measure(stm_tx_t *tx);
 
-void collect_after_tx_start(stm_tx_t *tx);
+void collect_after_tx_start(stm_tx_t *tx); // collect start time
 
-void collect_before_log_combine(stm_tx_t *tx);
+void collect_before_log_combine(stm_tx_t *tx); // collect v_log size
 
-void collect_before_log_flush(uint64_t flush_size);
+void collect_before_log_flush(uint64_t flush_size); // collect flush size
 
-void collect_before_commit(stm_tx_t *tx, bool if_flush);
+void collect_before_commit(stm_tx_t *tx, int if_flush, uint64_t commit_size); //collect delay and group size and combined size
 
 
 void init_measure() {
@@ -53,7 +53,7 @@ void collect_before_log_flush(uint64_t flush_size) {
     #endif
 }
 
-void collect_before_commit(stm_tx_t *tx, bool if_flush, uint64_t commit_size) {
+void collect_before_commit(stm_tx_t *tx, int if_flush, uint64_t commit_size) {
     #ifdef ENABLE_MEASURE
     struct timeval now_val;
     uint64_t delay, group_size;
@@ -73,6 +73,8 @@ void collect_before_commit(stm_tx_t *tx, bool if_flush, uint64_t commit_size) {
         group_size = tx->addition.tx_measure.group_size;
         if(group_size < GROUP_COMMIT_MAX) _tinystm.addition.global_measure.group_commit_collect[group_size] ++;
         else _tinystm.addition.global_measure.group_commit_collect[GROUP_COMMIT_MAX] ++;
+
+        tx->addition.tx_measure.group_size = 0;
     }
     #endif
 }

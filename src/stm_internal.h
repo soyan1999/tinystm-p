@@ -455,6 +455,7 @@ typedef struct global_ {
 
 extern global_t _tinystm;
 
+#include "measure.h"
 #include "log.h"
 #include "page.h"
 
@@ -1271,6 +1272,7 @@ int_stm_init_thread(void)
 #endif /* USE_BLOOM_FILTER */
   stm_allocate_ws_entries(tx, 0);
   v_log_init(tx); // init v_log
+  tx_init_measure(tx);
   /* Nesting level */
   tx->nesting = 0;
   /* Transaction-specific data */
@@ -1395,6 +1397,7 @@ int_stm_start(stm_tx_t *tx, stm_tx_attr_t attr)
   /* Initialize transaction descriptor */
   int_stm_prepare(tx);
   v_log_reset(tx); // reset v_log
+  collect_after_tx_start(tx);
   /* Callbacks */
   if (likely(_tinystm.nb_start_cb != 0)) {
     unsigned int cb;
