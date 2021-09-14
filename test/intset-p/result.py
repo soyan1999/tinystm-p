@@ -19,7 +19,7 @@ v_log_max = 2000 + 1
 group_size_max = 2000 + 1
 group_commit_max = 1000 + 1
 flush_max = 65 + 1
-delay_max = 2000 + 1
+delay_max = 10000 + 1
 
 v_log_collect = array.array('Q')
 group_size_collect = array.array('Q')

@@ -25,11 +25,11 @@ ifneq ($(CFG),debug)
   CPPFLAGS += -DNDEBUG
 endif
 
-ifneq ($(SIZE),small)
+ifeq ($(SIZE),small)
   CPPFLAGS += -DSMALL_POOL
 endif
 
-ifneq ($(MEASURE),yes)
+ifeq ($(MEASURE),yes)
   CPPFLAGS += -DENABLE_MEASURE
 endif
 
