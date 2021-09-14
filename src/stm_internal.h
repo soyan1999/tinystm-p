@@ -273,7 +273,7 @@ enum {                                  /* Transaction status */
 #define V_LOG_COLLECT_MAX 2000
 #define GROUP_COLLECT_MAX 2000
 #define FLUSH_COLLECT_MAX 65
-#define DELAY_COLLECT_MAX 2000
+#define DELAY_COLLECT_MAX 10000
 #define GROUP_COMMIT_MAX 1000
 
 typedef struct r_entry {                /* Read set entry */
