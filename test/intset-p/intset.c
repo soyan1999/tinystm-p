@@ -50,6 +50,11 @@ static double tanger_wrapperpure_erand48(unsigned short int __xsubi[3]) __attrib
 #elif defined(TM_ABI)
 # include "../../abi/tm_macros.h"
 #endif /* defined(TM_ABI) */
+#if defined(NUSE_TX)
+#define USE_PMDK 1
+#else
+#define USE_PMDK 0
+#endif
 
 #if defined(TM_GCC) || defined(TM_DTMC) || defined(TM_INTEL) || defined(TM_ABI)
 # define TM_COMPILER
@@ -1321,7 +1326,7 @@ static void *test(void *data)
         if (last < 0) {
           /* Add random value */
           val = rand_range(d->range, d->seed) + 1;
-          if (set_add(d->set, val, d)) {
+          if (set_add(d->set, val, USE_PMDK?NULL:d)) {
             d->diff++;
             last = val;
           }
@@ -1332,7 +1337,7 @@ static void *test(void *data)
           d->nb_add++;
         } else {
           /* Remove last value */
-          if (set_remove(d->set, last, d))
+          if (set_remove(d->set, last, USE_PMDK?NULL:d))
             d->diff--;
           #ifdef IDEBUG
           if (set_contains(d->set, last, CONTAIN))
@@ -1346,7 +1351,7 @@ static void *test(void *data)
         val = rand_range(d->range, d->seed) + 1;
         if ((op & 0x01) == 0) {
           /* Add random value */
-          if (set_add(d->set, val, d))
+          if (set_add(d->set, val, USE_PMDK?NULL:d))
             d->diff++;
           #ifdef IDEBUG
           if (!set_contains(d->set, val, CONTAIN))
@@ -1355,7 +1360,7 @@ static void *test(void *data)
           d->nb_add++;
         } else {
           /* Remove random value */
-          if (set_remove(d->set, val, d))
+          if (set_remove(d->set, val, USE_PMDK?NULL:d))
             d->diff--;
           #ifdef IDEBUG
           if (set_contains(d->set, val, CONTAIN))
@@ -1367,7 +1372,7 @@ static void *test(void *data)
     } else {
       /* Look for random value */
       val = rand_range(d->range, d->seed) + 1;
-      if ((success = set_contains(d->set, val, d)) == 1)
+      if ((success = set_contains(d->set, val, USE_PMDK?NULL:d)) == 1)
         d->nb_found++;
       #ifdef IDEBUG
       if (success != set_contains(d->set, val, CONTAIN))

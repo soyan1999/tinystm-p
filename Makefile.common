@@ -33,6 +33,10 @@ ifeq ($(MEASURE),yes)
   CPPFLAGS += -DENABLE_MEASURE
 endif
 
+ifeq ($(TX),no)
+  CPPFLAGS += -DNUSE_TX
+endif
+
 # TODO Should be only for test binaries
 LDFLAGS += -L$(LIBDIR) -l$(TM)
 
