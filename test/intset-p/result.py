@@ -34,7 +34,7 @@ with open('./result.bin', 'rb') as f:
     flush_size_collect.fromfile(f, flush_max)
     delay_time_collect.fromfile(f, delay_max)
 
-# print(get_inf(v_log_collect))
+print(get_inf(v_log_collect))
 print(get_inf(group_size_collect))
 print(get_inf(group_commit_collect))
 print(get_inf(flush_size_collect))
