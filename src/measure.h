@@ -60,22 +60,24 @@ void collect_before_commit(stm_tx_t *tx, int if_flush, uint64_t commit_size) {
     uint64_t delay, group_size;
 
     if (if_flush) {
-        gettimeofday(&now_val, NULL);
-        
-        for(uint64_t i = 0; i < tx->addition.tx_measure.group_size; i ++) {
-            delay = 1000000 * (now_val.tv_sec - tx->addition.tx_measure.start_time[i].tv_sec) + \
-             now_val.tv_usec - tx->addition.tx_measure.start_time[i].tv_usec;
-            
-            if (delay < DELAY_COLLECT_MAX) _tinystm.addition.global_measure.delay_time_collect[delay] ++;
-            else _tinystm.addition.global_measure.delay_time_collect[DELAY_COLLECT_MAX] ++;
+        if(commit_size == 0) {
+            gettimeofday(&now_val, NULL);
+
+            for(uint64_t i = 0; i < tx->addition.tx_measure.group_size; i ++) {
+                delay = 1000000 * (now_val.tv_sec - tx->addition.tx_measure.start_time[i].tv_sec) + \
+                now_val.tv_usec - tx->addition.tx_measure.start_time[i].tv_usec;
+                
+                if (delay < DELAY_COLLECT_MAX) _tinystm.addition.global_measure.delay_time_collect[delay] ++;
+                else _tinystm.addition.global_measure.delay_time_collect[DELAY_COLLECT_MAX] ++;
+            }
+
+            if(commit_size < GROUP_COLLECT_MAX) _tinystm.addition.global_measure.group_size_collect[commit_size] ++;
+            else _tinystm.addition.global_measure.group_size_collect[GROUP_COLLECT_MAX] ++;
+
+            group_size = tx->addition.tx_measure.group_size;
+            if(group_size < GROUP_COMMIT_MAX) _tinystm.addition.global_measure.group_commit_collect[group_size] ++;
+            else _tinystm.addition.global_measure.group_commit_collect[GROUP_COMMIT_MAX] ++;
         }
-
-        if(commit_size < GROUP_COLLECT_MAX) _tinystm.addition.global_measure.group_size_collect[commit_size] ++;
-        else _tinystm.addition.global_measure.group_size_collect[GROUP_COLLECT_MAX] ++;
-
-        group_size = tx->addition.tx_measure.group_size;
-        if(group_size < GROUP_COMMIT_MAX) _tinystm.addition.global_measure.group_commit_collect[group_size] ++;
-        else _tinystm.addition.global_measure.group_commit_collect[GROUP_COMMIT_MAX] ++;
 
         tx->addition.tx_measure.group_size = 0;
     }
