@@ -12,7 +12,7 @@ def get_inf(a):
             min_ = i
         if num_ != 0 and i > max_:
             max_ = i
-    return sum / num, min_, max_
+    return sum / num, sum, min_, max_
 
 
 v_log_max = 2000 + 1
@@ -34,8 +34,12 @@ with open('./result.bin', 'rb') as f:
     flush_size_collect.fromfile(f, flush_max)
     delay_time_collect.fromfile(f, delay_max)
 
-print(get_inf(v_log_collect))
+# print(get_inf(v_log_collect))
 print(get_inf(group_size_collect))
 print(get_inf(group_commit_collect))
 print(get_inf(flush_size_collect))
 print(get_inf(delay_time_collect))
+
+_, v_log_sum, _, _ = get_inf(v_log_collect)
+_, flush_sum, _, _ = get_inf(flush_size_collect)
+print(flush_sum / v_log_sum)
