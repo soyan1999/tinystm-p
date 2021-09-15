@@ -60,7 +60,7 @@ void collect_before_commit(stm_tx_t *tx, int if_flush, uint64_t commit_size) {
     uint64_t delay, group_size;
 
     if (if_flush) {
-        if(commit_size == 0) {
+        if(commit_size != 0) {
             gettimeofday(&now_val, NULL);
 
             for(uint64_t i = 0; i < tx->addition.tx_measure.group_size; i ++) {
