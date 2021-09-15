@@ -42,6 +42,10 @@ void collect_after_tx_start(stm_tx_t *tx) {
 void collect_before_log_combine(stm_tx_t *tx) {
     #ifdef ENABLE_MEASURE
     uint64_t v_log_num = tx->addition.v_log_block->num;
+    if(v_log_num == 0) {
+        tx->addition.tx_measure.group_size --;
+        return;
+    }
     if (v_log_num < V_LOG_COLLECT_MAX) _tinystm.addition.global_measure.v_log_size_collect[v_log_num] ++;
     else _tinystm.addition.global_measure.v_log_size_collect[V_LOG_COLLECT_MAX] ++;
     #endif
