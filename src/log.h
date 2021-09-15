@@ -214,7 +214,7 @@ static void nv_log_get(v_log_entry_t *entry) {
     }
 }
 
-static int nv_log_insert(uint64_t *entry, int state) {
+static int nv_log_insert(uint64_t *entry, int state) { //state mean 
     struct nv_log_block *temp;
     static uint64_t begin_off;
     if (state == 0) 
@@ -239,6 +239,7 @@ static int nv_log_insert(uint64_t *entry, int state) {
         return 0;
     }
     else if (state == 2) {
+        collect_before_log_flush(_tinystm.addition.nv_log->write_offset - begin_off);
         pmemobj_flush(_tinystm.addition.pool, &temp->logs[begin_off], 2 * (_tinystm.addition.nv_log->write_offset - begin_off) * sizeof(uint64_t));
     }
     return 0;
@@ -267,6 +268,7 @@ void nv_log_init() {
 }
 
 int nv_log_record(stm_tx_t *tx, uint64_t commit_timestamp) {
+    if(tx->addition.v_log_block->num == 0) return 0;
     nv_log_begin_t begin_block = {.begin_flag = BEGIN_SIG, .length = tx->addition.v_log_block->num};
     nv_log_end_t end_block = {.end_flag = END_SIG, .time_commit = commit_timestamp + _tinystm.addition.nv_log->last_timestamp};
     // backup of write ptr
