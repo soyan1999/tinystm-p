@@ -26,6 +26,7 @@ group_size_collect = array.array('Q')
 group_commit_collect = array.array('Q')
 flush_size_collect = array.array('Q')
 delay_time_collect = array.array('Q')
+log_delay_time_collect = array.array('Q')
 
 with open('./result.bin', 'rb') as f:
     v_log_collect.fromfile(f, v_log_max)
@@ -42,4 +43,6 @@ print(get_inf(delay_time_collect))
 
 _, v_log_sum, _, _ = get_inf(v_log_collect)
 _, flush_sum, _, _ = get_inf(flush_size_collect)
+_, log_delay_sum, _, _ = get_inf(log_delay_time_collect)
 print(flush_sum / v_log_sum)
+print(flush_sum / log_delay_sum * 16 * 1000000 / pow(1024, 3))
