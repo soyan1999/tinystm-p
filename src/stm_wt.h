@@ -577,6 +577,7 @@ stm_wt_commit(stm_tx_t *tx)
   }
   if(!tx->attr.read_only) {
     collect_before_log_combine(tx);
+    collect_before_log_start(tx);
     // add for persist
     while (nv_log_record(tx, t) < 0) {
       nv_log_reproduce();
