@@ -312,6 +312,7 @@ int log_before_commit(stm_tx_t *tx, uint64_t commit_timestamp) {
     _tinystm.addition.max_timestamp = commit_timestamp;
     _tinystm.addition.v_log_transaction_count ++;
     if (_tinystm.addition.v_log_transaction_count >= MAX_UNPERSIST_TRANSACTION || _tinystm.addition.v_log_count >= NV_LOG_LENGTH) {
+        collect_before_log_start(tx);
         while(v_log_table_persist()) {
             nv_log_reproduce();
         }
