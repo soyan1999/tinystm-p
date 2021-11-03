@@ -13,6 +13,8 @@ void collect_after_tx_start(stm_tx_t *tx); // collect start time
 
 void collect_before_log_combine(stm_tx_t *tx); // collect v_log size
 
+void collect_before_log_start(stm_tx_t *tx); // collect log start time
+
 void collect_before_log_flush(uint64_t flush_size); // collect flush size
 
 void collect_before_commit(stm_tx_t *tx, int if_flush, uint64_t commit_size); //collect delay and group size and combined size
@@ -51,6 +53,12 @@ void collect_before_log_combine(stm_tx_t *tx) {
     #endif
 }
 
+void collect_before_log_start(stm_tx_t *tx) {
+    #ifdef ENABLE_MEASURE
+    gettimeofday(&tx->addition.tx_measure.log_start_time, NULL);
+    #endif
+}
+
 void collect_before_log_flush(uint64_t flush_size) {
     #ifdef ENABLE_MEASURE
     if (flush_size < FLUSH_COLLECT_MAX) _tinystm.addition.global_measure.flush_size_collect[flush_size] ++;
@@ -61,7 +69,7 @@ void collect_before_log_flush(uint64_t flush_size) {
 void collect_before_commit(stm_tx_t *tx, int if_flush, uint64_t commit_size) {
     #ifdef ENABLE_MEASURE
     struct timeval now_val;
-    uint64_t delay, group_size;
+    uint64_t delay, group_size, log_delay;
 
     if (if_flush) {
         if(commit_size != 0) {
@@ -74,6 +82,12 @@ void collect_before_commit(stm_tx_t *tx, int if_flush, uint64_t commit_size) {
                 if (delay < DELAY_COLLECT_MAX) _tinystm.addition.global_measure.delay_time_collect[delay] ++;
                 else _tinystm.addition.global_measure.delay_time_collect[DELAY_COLLECT_MAX] ++;
             }
+
+            log_delay = 1000000 * (now_val.tv_sec - tx->addition.tx_measure.log_start_time.tv_sec) + \
+            now_val.tv_usec - tx->addition.tx_measure.log_start_time.tv_usec;
+            
+            if (log_delay < DELAY_COLLECT_MAX) _tinystm.addition.global_measure.log_delay_time_collect[log_delay] ++;
+            else _tinystm.addition.global_measure.log_delay_time_collect[DELAY_COLLECT_MAX] ++;
 
             if(commit_size < GROUP_COLLECT_MAX) _tinystm.addition.global_measure.group_size_collect[commit_size] ++;
             else _tinystm.addition.global_measure.group_size_collect[GROUP_COLLECT_MAX] ++;

@@ -336,10 +336,12 @@ typedef struct global_measure {
   uint64_t group_commit_collect[GROUP_COMMIT_MAX + 1];
   uint64_t flush_size_collect[FLUSH_COLLECT_MAX + 1];
   uint64_t delay_time_collect[DELAY_COLLECT_MAX + 1];
+  uint64_t log_delay_time_collect[DELAY_COLLECT_MAX + 1];
 } global_measure_t;
 
 typedef struct tx_measure {
   struct timeval start_time[GROUP_COLLECT_MAX];
+  struct timeval log_start_time;
   uint64_t group_size;
   // bool in_group;
   uint64_t vlog_size;
