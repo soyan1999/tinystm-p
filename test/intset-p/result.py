@@ -34,12 +34,14 @@ with open('./result.bin', 'rb') as f:
     group_commit_collect.fromfile(f, group_commit_max)
     flush_size_collect.fromfile(f, flush_max)
     delay_time_collect.fromfile(f, delay_max)
+    log_delay_time_collect.fromfile(f, delay_max)
 
 print(get_inf(v_log_collect))
 print(get_inf(group_size_collect))
 print(get_inf(group_commit_collect))
 print(get_inf(flush_size_collect))
 print(get_inf(delay_time_collect))
+print(get_inf(log_delay_time_collect))
 
 _, v_log_sum, _, _ = get_inf(v_log_collect)
 _, flush_sum, _, _ = get_inf(flush_size_collect)
