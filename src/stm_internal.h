@@ -465,6 +465,8 @@ void collect_after_tx_start(stm_tx_t *tx); // collect start time
 
 void collect_before_log_combine(stm_tx_t *tx); // collect v_log size
 
+void collect_before_log_start(stm_tx_t *tx); // collect log start time
+
 void collect_before_log_flush(uint64_t flush_size); // collect flush size
 
 void collect_before_commit(stm_tx_t *tx, int if_flush, uint64_t commit_size); //collect delay and group size and combined size
